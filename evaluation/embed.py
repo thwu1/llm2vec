@@ -2,10 +2,11 @@ from sentence_transformers import SentenceTransformer
 import json
 import os
 
-embedder = SentenceTransformer("all-mpnet-base-v2")
+embedder_name = "all-mpnet-base-v2"
+embedder = SentenceTransformer(embedder_name)
 
 file_paths = os.listdir("evaluation/outputs")
-filtered_file_paths = [f"evaluation/outputs/{fp}" for fp in file_paths if "embed" not in fp and f"{fp[:-5]}_embed.json" not in file_paths]
+filtered_file_paths = [f"evaluation/outputs/{fp}" for fp in file_paths if "embed" not in fp and f"{fp[:-5]}_{embedder_name}_embed.json" not in file_paths]
 print(filtered_file_paths)
 
 for file_path in filtered_file_paths:
@@ -28,4 +29,4 @@ for file_path in filtered_file_paths:
 
     assert idx == len(sentence_embeddings)
 
-    json.dump(json_data, open(file_path.replace(".json", "_embed.json"), "w"), indent=2)
+    json.dump(json_data, open(file_path.replace(".json", f"_{embedder_name}_embed.json"), "w"), indent=2)

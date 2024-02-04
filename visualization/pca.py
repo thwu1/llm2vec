@@ -6,8 +6,6 @@ import json
 import pandas as pd
 import os
 
-data_path = "/data/tianhao/llm2vec/evaluation/outputs/mt-bench-openchat_3.5_embed.json"
-
 def visualize_embeddings(data_path):
     json_data = json.load(open(data_path, "r"))
     embeddings = []
@@ -60,6 +58,6 @@ def compare_embeddings(data_paths):
     # plt.show()
 
 data_paths = os.listdir("evaluation/outputs")
-filtered_data_paths = [f"evaluation/outputs/{data_path}" for data_path in data_paths if data_path.endswith("_embed.json")]
+filtered_data_paths = [f"evaluation/outputs/{data_path}" for data_path in data_paths if data_path.endswith("xxl_embed.json")]
 
 compare_embeddings(filtered_data_paths)
