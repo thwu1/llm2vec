@@ -1,19 +1,39 @@
 from vllm import LLM, SamplingParams
 import argparse
 import json
+from evaluation.utils import get_chat_template
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default="gpt2")
-
-
 args = parser.parse_args()
 
-llm = LLM(model=args.model, tensor_parrallel_size=1)
 
-sampling_params = SamplingParams(temperature=0.7, top_k=40, top_p=0.95, num_samples=5)
+sampling_params = SamplingParams(temperature=0.7, top_k=40, top_p=0.95, n=5, max_tokens=1024)
+llm = LLM(model=args.model, tensor_parallel_size=2)
 
-data = json.load(open("data/mt-bench-first-round.json", "r"))
-
+json_data = json.load(open("data/mt-bench-first-round.json", "r"))
 
 def data_to_list(data):
     return [item["prompt"] for item in data]
+
+chat_template = get_chat_template(args.model)
+ls_prompt = [chat_template(prompt) for prompt in data_to_list(json_data)]
+print(ls_prompt[0])
+
+outputs = llm.generate(prompts=ls_prompt, sampling_params=sampling_params)
+
+def get_text(outputs):
+    ls = []
+    for output in outputs:
+        ls.append([output.outputs[i].text for i in range(len(output.outputs))])
+    return ls
+
+outputs_text = get_text(outputs)
+# print(outputs_text)
+for data, output in zip(json_data, outputs_text):
+    data["output"] = output
+
+if not os.path.exists("evaluation/outputs"):
+    os.makedirs("evaluation/outputs")
+json.dump(json_data, open(f"evaluation/outputs/mt-bench-{args.model.split('/')[-1]}.json", "w"), indent=2)
