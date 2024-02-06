@@ -14,7 +14,12 @@ class BertModelCustom(BertModel):
         self.pooler = self.get_pooler()
 
         for name, param in self.named_parameters():
-            if name.startswith("embeddings") and "layernorm" not in name.lower() and "word_embeddings" not in name.lower():
+            if (
+                name.startswith("embeddings")
+                and "layernorm" not in name.lower()
+                # and "word_embeddings" not in name.lower()
+                and "type_embeddings" not in name.lower()
+            ):
                 param.detach_()
                 param.requires_grad = False
                 param.data.fill_(0.0)
@@ -37,7 +42,15 @@ class BertModelCustom(BertModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        use_cls=True,
     ):
+        if use_cls:
+            # append a [CLS] token at the beginning, represented by the first token_type_id
+            bs, _, dim = inputs_embeds.size()
+            inputs_embeds = torch.cat([torch.zeros(bs, 1, dim, device=self.device), inputs_embeds], dim=1)
+            token_type_ids = torch.zeros(bs, dtype=torch.long, device=self.device)
+            token_type_embedding = self.embeddings.token_type_embeddings(token_type_ids)
+            inputs_embeds[:, 0, :] += self.embeddings.token_type_embeddings(token_type_ids)
         return super().forward(
             input_ids=None,
             attention_mask=None,
@@ -63,7 +76,8 @@ class BertForContrastiveLearning(BertPreTrainedModel):
         self.dropout = nn.Dropout(classifier_dropout)
         self.mlp = nn.Sequential(
             nn.Linear(config.hidden_size, 4 * config.hidden_size),
-            nn.GELU(),
+            # nn.GELU(),
+            nn.ReLU(),
             nn.Linear(4 * config.hidden_size, config.hidden_size),
         )
 
@@ -77,6 +91,7 @@ class BertForContrastiveLearning(BertPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        use_cls: Optional[bool] = True,
     ):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -86,6 +101,7 @@ class BertForContrastiveLearning(BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            use_cls=use_cls,
         )
 
         pooled_output = outputs[1]
@@ -107,6 +123,15 @@ class BertForContrastiveLearning(BertPreTrainedModel):
             return embeddings
         else:
             return embeddings.tolist()
-    
+
     def get_device(self):
         return self.bert.device
+
+    def get_embeddings(self):
+        return self.bert.get_embeddings()
+
+    def get_encoder(self):
+        return self.bert.get_encoder()
+
+    def get_pooler(self):
+        return self.bert.get_pooler()

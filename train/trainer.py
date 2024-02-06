@@ -1,27 +1,35 @@
 from train.modeling import BertModelCustom, BertForContrastiveLearning
 import torch
 import torch.nn.functional as F
-import logging
 import numpy as np
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import seaborn as sns
 import wandb
+import os
 
 
 class ContrastiveTrainer:
-    def __init__(self, model, dataloader, test_dataloader, optimizer_config, label_name):
+    def __init__(self, model, dataloader, test_dataloader, config, label_name):
         self.model = model
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-5, eps=1e-8)
-        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.1)
+        # embedding_params = [p for name, p in self.model.named_parameters() if "embedding" in name and p.requires_grad]  # Adjust based on your model structure
+        # other_params = [p for name, p in self.model.named_parameters() if "embedding" not in name and p.requires_grad]
+        # print(f"Embedding params: {embedding_params}")
+        # param_groups = [
+        #     {'params': embedding_params, 'lr': 1e-5},
+        #     {'params': other_params, 'lr': 1e-5}
+        # ]
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), **config["optimizer_config"])
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, **config["scheduler_config"])
         self.dataloader = dataloader
         self.test_dataloader = test_dataloader
         self.label_name = label_name
-        self.info_nce_temp = 1.0
-        # self.criterion = torch.nn.CrossEntropyLoss()
+        self.config = config
+        self.info_nce_temp = self.config["trainer_config"]["info_nce_temp"]
+        self.num_epochs = self.config["trainer_config"]["num_epochs"]
 
-        wandb.init(project="contrastive-learning")
         self.logger = wandb
+        self.logger.init(project="contrastive-learning", config=config)
 
     def info_nce_loss(self, feats, temperature=1.0):
 
@@ -42,7 +50,7 @@ class ContrastiveTrainer:
         step = 0
         device = self.model.get_device()
         print(f"Device: {device}")
-        for epoch in range(100000):
+        for epoch in range(self.num_epochs):
             for batch in self.dataloader:
                 self.optimizer.zero_grad()
                 inputs = torch.cat([batch[0], batch[1]], dim=0).to(device)
@@ -53,7 +61,7 @@ class ContrastiveTrainer:
                 self.optimizer.step()
                 self.scheduler.step()
                 step += 1
-                self.logger.log({"loss": loss.item()})
+                self.logger.log({"loss": loss.item(), "lr": self.scheduler.get_last_lr()[0]})
                 print(f"Epoch {epoch}, Step {step}, Loss: {loss.item()}")
 
                 if step % 100 == 0:
@@ -69,7 +77,7 @@ class ContrastiveTrainer:
             inputs = torch.cat([batch[0], batch[1]], dim=0).to(self.model.get_device())
             outputs = self.model(inputs)
             test_loss = self.info_nce_loss(outputs, 1.0)
-        self.logger.log({"test_loss": test_loss.item()})
+        self.logger.log({"test_loss": test_loss.item()}, commit=False)
         print(f"Test loss: {test_loss.item()}")
         model_embeddings = self.model.encode(batch[0].to(self.model.get_device()), output_tensor=False)
         self.plot(model_embeddings, step)
@@ -81,6 +89,8 @@ class ContrastiveTrainer:
         pass
 
     def plot(self, model_embeddings, step):
+        if not os.path.exists("eval_figs"):
+            os.makedirs("eval_figs")
 
         X = np.array(model_embeddings)
         reducer = PCA(n_components=2)
@@ -95,7 +105,3 @@ class ContrastiveTrainer:
         plt.legend(title="Models embedding visualized by PCA")
         plt.savefig(f"eval_figs/{step}.png")
         plt.close()
-        
-
-
-        
