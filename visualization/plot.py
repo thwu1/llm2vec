@@ -3,9 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import json
-import pandas as pd
 import os
 import umap
+import argparse
+from tqdm import tqdm
 
 def visualize_embeddings(data_path, method="pca"):
     assert method in ["pca", "umap"]
@@ -28,8 +29,7 @@ def visualize_embeddings(data_path, method="pca"):
     plt.xlabel("Component 1")
     plt.ylabel("Component 2")
     plt.legend(title="Category")
-    plt.savefig(f"visualization/{data_path.split('/')[-1][:-5]}.png")
-    # plt.show()
+    plt.savefig(f"visualization/figs/{data_path.split('/')[-1][:-5]}.png")
 
 def compare_embeddings(data_paths, method="pca"):
     assert method in ["pca", "umap"]
@@ -55,13 +55,21 @@ def compare_embeddings(data_paths, method="pca"):
     plt.xlabel("Component 1")
     plt.ylabel("Component 2")
     plt.legend(title="Data Path")
-    plt.savefig(f"visualization/compare.png")
+    plt.savefig(f"visualization/figs/compare.png")
     # plt.show()
 
-data_paths = os.listdir("evaluation/outputs/all-mpnet-base-v2")
-filtered_data_paths = [f"evaluation/outputs/all-mpnet-base-v2/{data_path}" for data_path in data_paths if data_path.endswith("_embed.json")]
+if __name__ == "__main__":
 
-compare_embeddings(filtered_data_paths)
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--dir", type=str, default="evaluation/outputs/all-mpnet-base-v2")
+    argparser.add_argument("--method", type=str, default="pca")
+    args = argparser.parse_args()
 
-for data_path in filtered_data_paths:
-    visualize_embeddings(data_path)
+    data_paths = os.listdir(args.dir)
+    filtered_data_paths = [f"{args.dir}/{data_path}" for data_path in data_paths if data_path.endswith("_embed.json")]
+    print("Filtered Data Paths:", filtered_data_paths)
+
+    compare_embeddings(filtered_data_paths, method=args.method)
+
+    for data_path in tqdm(filtered_data_paths):
+        visualize_embeddings(data_path, method=args.method)
