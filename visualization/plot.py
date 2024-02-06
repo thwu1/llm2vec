@@ -30,6 +30,8 @@ def visualize_embeddings(data_path, method="pca"):
     plt.ylabel("Component 2")
     plt.legend(title="Category")
     plt.savefig(f"visualization/figs/{data_path.split('/')[-1][:-5]}.png")
+    # plt.show()
+    plt.close()
 
 def compare_embeddings(data_paths, method="pca"):
     assert method in ["pca", "umap"]
@@ -57,6 +59,7 @@ def compare_embeddings(data_paths, method="pca"):
     plt.legend(title="Data Path")
     plt.savefig(f"visualization/figs/compare.png")
     # plt.show()
+    plt.close()
 
 if __name__ == "__main__":
 

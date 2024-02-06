@@ -27,20 +27,22 @@ if __name__ == "__main__":
 
         def get_sentences(data):
             ls = []
+            prompts = []
             for item in data:
                 for output in item["output"]:
                     ls.append(item["prompt"] + output)
-            return ls
+                    prompts.append(item["prompt"])
+            return ls, prompts
 
-        sentences = get_sentences(json_data)
-        sentence_embeddings = embedder.encode(sentences)
+        sentences, prompts = get_sentences(json_data)
+        embeddings = embedder.encode(sentences) - embedder.encode(prompts)
 
         idx = 0
         for item in json_data:
-            item["embedding"] = sentence_embeddings[idx : idx + len(item["output"])].tolist()
+            item["embedding"] = embeddings[idx : idx + len(item["output"])].tolist()
             idx += len(item["output"])
 
-        assert idx == len(sentence_embeddings)
+        assert idx == len(embeddings)
 
         json.dump(
             json_data,
