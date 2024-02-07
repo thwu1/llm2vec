@@ -6,13 +6,26 @@ import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", type=str, default="gpt2")
+parser.add_argument("--parallel", type=int, default=1)
+parser.add_argument("--test", type=bool, default=False)
 args = parser.parse_args()
 
 
-sampling_params = SamplingParams(temperature=0.7, top_k=40, top_p=0.95, n=5, max_tokens=1024)
-llm = LLM(model=args.model, tensor_parallel_size=2)
+sampling_params = SamplingParams(temperature=0.9, n=1, max_tokens=1024)
+llm = LLM(model=args.model, tensor_parallel_size=args.parallel)
 
-json_data = json.load(open("data/mt-bench-first-round.json", "r"))
+json_data = []
+with open("data/chat_22k.json", "r") as file:
+    for line in file:
+        try:
+            json_object = json.loads(line)
+            json_data.append(json_object)
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON: {e}")
+print("Num of Prompts:", len(json_data))
+
+if args.test:
+    json_data = json_data[:100]
 
 def data_to_list(data):
     return [item["prompt"] for item in data]
@@ -36,4 +49,4 @@ for data, output in zip(json_data, outputs_text):
 
 if not os.path.exists("evaluation/outputs"):
     os.makedirs("evaluation/outputs")
-json.dump(json_data, open(f"evaluation/outputs/mt-bench-{args.model.split('/')[-1]}.json", "w"), indent=2)
+json.dump(json_data, open(f"evaluation/outputs/{args.model.split('/')[-1]}.json", "w"), indent=2)
