@@ -6,7 +6,7 @@ import json
 
 config = json.load(open("config/config.json"))
 
-dataset = ContrastiveDataset(dir = "evaluation/outputs/all-mpnet-base-v2")
+dataset = ContrastiveDataset(dir="evaluation/outputs/all-mpnet-base-v2")
 label_name = dataset.get_label_name()
 dataloader, test_dataloader = dataset.get_dataloader(batch_size=config["trainer_config"]["batch_size"], test_split=0.1)
 
