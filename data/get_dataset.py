@@ -2,8 +2,12 @@ from datasets import load_dataset
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 import json
+import os
+
 # import numpy as np
 # import json
+
+pwd = os.getcwd()
 
 LABEL_A = 0
 LABEL_B = 1
@@ -34,44 +38,51 @@ prompts = [item["test_questions"] for item in data]
 CATEGORIES = list(set(categories))
 MODEL_NAME = [item["model"] for item in data[0]["answers"]]
 
+
 def category_to_label(category):
     return CATEGORIES.index(category)
 
+
 def model_to_label(model):
     return MODEL_NAME.index(model)
+
 
 # get the matrix of correctness
 correctness = []
 for item in data:
     # print(item)
     assert all([item["answers"][id]["model"] == model_name for id, model_name in enumerate(MODEL_NAME)])
-    correctness.append([convert_to_label(item["answers"][id]["answer"]) == convert_to_label(item["reference_answers"]) for id, model_name in enumerate(MODEL_NAME)])
+    correctness.append(
+        [convert_to_label(item["answers"][id]["answer"]) == convert_to_label(item["reference_answers"]) for id, model_name in enumerate(MODEL_NAME)]
+    )
 
 # use df to save the correctness matrix
 df = pd.DataFrame(correctness, columns=MODEL_NAME).astype(int)
-df.to_csv("/Users/thw/llm2vec/data/mmlu_correctness_1k.csv", index=False)
+df.to_csv(f"{pwd}/data/mmlu_correctness_1k.csv", index=False)
+
 
 def train_test_split(test_ratio=0.1, seed=42):
-    df = pd.read_csv("/Users/thw/llm2vec/data/mmlu_correctness_1k.csv")
+    df = pd.read_csv(f"{pwd}/data/mmlu_correctness_1k.csv")
     df = df.sample(frac=1, random_state=seed).reset_index()
-    
+
     # Calculate the split index
     split_index = int(len(df) * (1 - test_ratio))
-    
+
     # Split the DataFrame into train and test
     train_df = df.iloc[:split_index].reset_index(drop=True)
     test_df = df.iloc[split_index:].reset_index(drop=True)
 
     model_column_indices = [train_df.columns.get_loc(col) for col in train_df.columns[1:]]
-    
+
     # Convert train_df and test_df to tuples
     train_tuples = [(row[1][0], train_df.columns[col_idx], row[1][col_idx]) for row in train_df.iterrows() for col_idx in model_column_indices]
     test_tuples = [(row[1][0], test_df.columns[col_idx], row[1][col_idx]) for row in test_df.iterrows() for col_idx in model_column_indices]
 
-    train_df_tuples = pd.DataFrame(train_tuples, columns=['prompt_id', 'model_name', 'label'])
-    test_df_tuples = pd.DataFrame(test_tuples, columns=['prompt_id', 'model_name', 'label'])
-    
+    train_df_tuples = pd.DataFrame(train_tuples, columns=["prompt_id", "model_name", "label"])
+    test_df_tuples = pd.DataFrame(test_tuples, columns=["prompt_id", "model_name", "label"])
+
     return train_df_tuples, test_df_tuples
+
 
 print(train_test_split())
 
@@ -91,11 +102,11 @@ test_df_tuples["prompt"] = [prompts[i] for i in test_df_tuples["prompt_id"]]
 
 col_order = ["prompt_id", "model_id", "category_id", "label", "prompt", "model_name", "category"]
 
-train_df_tuples.sample(frac=1, random_state=42).reindex(columns=col_order).to_csv("/Users/thw/llm2vec/data/mmlu_train.csv", index=False)
-test_df_tuples.sort_values(by="prompt_id").reindex(columns=col_order).to_csv("/Users/thw/llm2vec/data/mmlu_test.csv", index=False)
+train_df_tuples.sample(frac=1, random_state=42).reindex(columns=col_order).to_csv(f"{pwd}/data/mmlu_train.csv", index=False)
+test_df_tuples.sort_values(by="prompt_id").reindex(columns=col_order).to_csv(f"{pwd}/data/mmlu_test.csv", index=False)
 
 # precompute the embeddings
-model = SentenceTransformer('all-mpnet-base-v2')
+model = SentenceTransformer("all-mpnet-base-v2")
 cleaned_prompts = [prompt.replace("Answer:", "").strip("\n") for prompt in prompts]
 embeddings = model.encode(cleaned_prompts)
-json.dump(embeddings.tolist(), open("/Users/thw/llm2vec/data/embeddings.json", "w"))
+json.dump(embeddings.tolist(), open(f"{pwd}/data/embeddings.json", "w"))

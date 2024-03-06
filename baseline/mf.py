@@ -16,54 +16,37 @@ import json
 torch.manual_seed(42)
 np.random.seed(42)
 
-MODEL_NAMES = [
-    "vicuna_13b_v1.5",
-    "vicuna_33b_v1.3",
-    "tulu_30b",
-    "SOLAR_10.7B_Instruct_v1.0",
-    "Qwen_14B_Chat",
-    "Llama_2_13b_chat_hf",
-    "Mistral_7B_v0.1",
-    "zephyr_7b_beta",
-    "vicuna_7b_v1.5",
-    "Llama_2_7b_chat_hf",
-    "Starling_LM_7B_alpha",
-    "baize_v2_13b",
-    "Yi_34B_Chat",
-    "koala_13B_HF",
-    "mpt_7b_chat",
-    "dolly_v2_12b",
-    "stablelm_tuned_alpha_7b",
-    "Orca_2_13b",
-    "vicuna_7b_v1.5_16k",
-    "openchat_3.5",
-    "WizardLM_13B_V1.2",
-    "openchat_3.5_0106",
-    "Nous_Hermes_13b",
-    "LlamaGuard_7b",
-]
+pwd = os.getcwd()
+
+data = pd.read_csv("{pwd}/data/mmlu_correctness_1k.csv")
+MODEL_NAMES = [key for key in data.columns]
+print(MODEL_NAMES)
 
 
-def read_data():
-    data_dir = "/home/thw/llm2vec"
-    # names = ["user_id", "item_id", "rating", "timestamp"]
-    data = pd.read_csv(os.path.join(data_dir, "triple_correctness.csv"), engine="python")
-    num_models = data.model_id.unique().shape[0]
-    num_prompts = data.prompt_id.unique().shape[0]
-    return data, num_models, num_prompts
+def split_and_load(batch_size=256):
+    train_data = pd.read_csv(f"{pwd}/data/mmlu_train.csv")
+    test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
 
+    class CustomDataset(Dataset):
+        def __init__(self, data):
 
-def split_and_load(test_ratio=0.9, batch_size=256, mode="random"):
-    assert mode in ["random", "ood"]
-    data, num_models, num_prompts = read_data()
+            self.models = torch.tensor(data["model_id"], dtype=torch.int64)
+            self.prompts = torch.tensor(data["prompt_id"], dtype=torch.int64)
+            self.labels = torch.tensor(data["label"], dtype=torch.int64)
+            self.categories = torch.tensor(data["category_id"], dtype=torch.int64)
+            self.num_models = len(data["model_id"].unique())
+            self.num_prompts = len(data["prompt_id"].unique())
+            self.num_classes = len(data["label"].unique())
+            print(f"number of models: {self.num_models}, number of prompts: {self.num_prompts}")
 
-    class TripleDataset(Dataset):
-        def __init__(self, models, prompts, labels, num_models, num_prompts):
-            self.models = torch.tensor(models, dtype=torch.int64)
-            self.prompts = torch.tensor(prompts, dtype=torch.int64)
-            self.labels = torch.tensor(labels, dtype=torch.int64)
-            self.num_models = num_models
-            self.num_prompts = num_prompts
+        def get_num_models(self):
+            return self.num_models
+
+        def get_num_prompts(self):
+            return self.num_prompts
+
+        def get_num_classes(self):
+            return self.num_classes
 
         def __len__(self):
             return len(self.models)
@@ -71,49 +54,24 @@ def split_and_load(test_ratio=0.9, batch_size=256, mode="random"):
         def __getitem__(self, index):
             return self.models[index], self.prompts[index], self.labels[index]
 
-        def get_dataloaders(self, batch_size, test_ratio=0.1, mode="random"):
-            if mode == "random":
-                num_test = int(len(self) * test_ratio)
-                num_train = len(self) - num_test
-                train_set, test_set = torch.utils.data.random_split(self, [num_train, num_test])
-            else:
-                num_test_prompts = int(self.num_prompts * test_ratio)
-                num_train_prompts = self.num_prompts - num_test_prompts
-                # split num_prompts into train and test
-                train_prompts, test_prompts = torch.utils.data.random_split(torch.arange(self.num_prompts), [num_train_prompts, num_test_prompts])
-                # use filtered prompts to split data
-                train_indices = [i for i, prompt in enumerate(self.prompts) if prompt in train_prompts]
-                train_set = torch.utils.data.Subset(self, train_indices)
-                test_indices = [i for i, prompt in enumerate(self.prompts) if prompt not in train_prompts]
-                test_set = torch.utils.data.Subset(self, test_indices)
+        def get_dataloaders(self, batch_size):
+            return DataLoader(self, batch_size, shuffle=False)
 
-                print(f"train set: {len(train_set)}, test set: {len(test_set)}")
-            return DataLoader(train_set, batch_size=batch_size, shuffle=True), DataLoader(test_set, batch_size=batch_size, shuffle=False)
+    train_dataset = CustomDataset(train_data)
+    test_dataset = CustomDataset(test_data)
 
-    data = TripleDataset(data["model_id"], data["prompt_id"], data["label"], num_models, num_prompts)
-    # train test split
-    train_iter, test_iter = data.get_dataloaders(batch_size, test_ratio, mode=mode)
+    num_models = train_dataset.get_num_models()
+    num_prompts = train_dataset.get_num_prompts() + test_dataset.get_num_prompts()
+    num_classes = train_dataset.get_num_classes()
 
-    return num_models, num_prompts, train_iter, test_iter
+    train_loader = train_dataset.get_dataloaders(batch_size)
+    test_loader = test_dataset.get_dataloaders(batch_size)
 
-
-# data, num_models, num_prompts = read_data()
-# sparsity = 1 - len(data) / (num_models * num_prompts)
-# print(f"number of models: {num_models}, number of prompts: {num_prompts}")
-# print(f"matrix sparsity: {sparsity:f}")
-# print(data.head(5))
-
-# plot in plt
-# plt.figure(figsize=(10, 5))
-# plt.hist(data["rating"], bins=5, ec="black")
-# plt.xlabel("Rating")
-# plt.ylabel("Count")
-# plt.title("Distribution of labels in MovieLens 100K")
-# plt.show()
+    return num_models, num_prompts, num_classes, train_loader, test_loader
 
 
 class MF(torch.nn.Module):
-    def __init__(self, dim, num_models, num_prompts, num_classes=4):
+    def __init__(self, dim, num_models, num_prompts, num_classes=2):
         super().__init__()
         self._name = "MF"
         self.P = torch.nn.Embedding(num_models, dim)
@@ -141,9 +99,9 @@ class TextMF(torch.nn.Module):
         self._name = "TextMF"
         self.P = torch.nn.Embedding(num_models, dim)
         self.Q = torch.nn.Embedding(num_prompts, text_dim).requires_grad_(False)
-        embeddings = json.load(open("/home/thw/llm2vec/embeddings.json"))
+        embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
         self.Q.weight.data.copy_(torch.tensor(embeddings))
-        self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, 2 * text_dim), nn.ReLU(), torch.nn.Linear(2 * text_dim, dim))
+        self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, dim))
 
         # self.classifier = nn.Sequential(nn.Linear(dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, num_classes))
         self.classifier = nn.Sequential(nn.Linear(dim, num_classes))
@@ -160,19 +118,6 @@ class TextMF(torch.nn.Module):
     def predict(self, model, prompt):
         logits = self.forward(model, prompt)
         return torch.argmax(logits, dim=1)
-
-
-# class AutoRec(nn.Module):
-#     def __init__(self, num_models, num_prompts, dim=500, dropout=0.5):
-#         super(AutoRec, self).__init__()
-#         self.encoder = nn.Sequential(nn.Linear(num_prompts, dim), nn.Sigmoid())
-#         self.decoder = nn.Sequential(nn.Linear(dim, num_prompts))
-#         self.dropout = nn.Dropout(dropout)
-
-#     def forward(self, user, item):
-#         input = torch.zeros((len(user), num_prompts), dtype=torch.float32)
-#         input[range(len(user)), item] = 1
-#         return self.decoder(self.dropout(self.encoder(input)))
 
 
 def evaluator(net, test_iter, devices):
@@ -237,8 +182,19 @@ def plot_evolving_embeddings(embeddings, stride=10):
     plt.show()
 
 
-def train_recsys_rating(net, batch_size, num_epochs, loss=nn.CrossEntropyLoss(reduction="mean"), devices=["cuda"], evaluator=None, **kwargs):
-    num_models, num_prompts, train_iter, test_iter = split_and_load(batch_size=batch_size, test_ratio=0.1, mode="ood")
+def train_recsys_rating(
+    net,
+    train_iter,
+    test_iter,
+    num_models,
+    num_prompts,
+    batch_size,
+    num_epochs,
+    loss=nn.CrossEntropyLoss(reduction="mean"),
+    devices=["cuda"],
+    evaluator=evaluator,
+    **kwargs,
+):
     lr = 3e-4
     weight_decay = 1e-5
     wandb.init(project="llm2vec")
@@ -314,12 +270,13 @@ def train_recsys_rating(net, batch_size, num_epochs, loss=nn.CrossEntropyLoss(re
     plot_evolving_embeddings(embeddings, stride=max(num_epochs // 50, 1))
 
 
-_, num_models, num_prompts = read_data()
-# _, _, train, test = split_and_load(mode="ood")
-
-mf = TextMF(dim=10, num_models=num_models, num_prompts=num_prompts).to("cuda")
-train_recsys_rating(mf, batch_size=512, num_epochs=1000, evaluator=evaluator)
-# embeddings = np.load("embeddings.npy")
-# plot_evolving_embeddings(embeddings, stride=20)
-# for i in range(len(MODEL_NAMES)):
-#     print(MODEL_NAMES[i], embeddings[-1][i])
+batch_size = 512
+num_epochs = 100
+num_models, num_prompts, num_classes, train_loader, test_loader = split_and_load()
+mf = TextMF(
+    dim=64,
+    num_models=num_models,
+    num_prompts=num_prompts,
+    num_classes=num_classes,
+).to("cuda")
+train_recsys_rating(mf, train_loader, test_loader, num_models, num_prompts, batch_size, num_epochs, devices=["cuda"])
