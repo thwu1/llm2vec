@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 import json
 import os
+import tqdm
 
 pwd = os.getcwd()
 print(pwd)
@@ -12,8 +13,12 @@ def get_train_test():
     train_data = pd.read_csv(f"{pwd}/data/mmlu_train.csv")
     test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
 
-    train_data_group = [group for _, group in train_data.sort_values("model_id").groupby("model_id")]
-    test_data_group = [group for _, group in test_data.sort_values("model_id").groupby("model_id")]
+    train_data_group = [
+        group for _, group in train_data.sort_values("model_id").groupby("model_id")
+    ]
+    test_data_group = [
+        group for _, group in test_data.sort_values("model_id").groupby("model_id")
+    ]
 
     return train_data_group, test_data_group
 
@@ -28,10 +33,10 @@ def get_input(data):
 def evaluate(train_ls, test_ls):
     accu = []
     model_names = []
-    for i in range(len(train_ls)):
+    for i in tqdm.tqdm(range(len(train_ls))):
         X_train, y_train = get_input(train_ls[i])
         X_test, y_test = get_input(test_ls[i])
-        neigh = KNeighborsClassifier(n_neighbors=31)
+        neigh = KNeighborsClassifier(n_neighbors=5)
         neigh.fit(X_train, y_train)
         pred_y = neigh.predict(X_test).tolist()
         bool_ls = list(map(lambda x, y: int(x == y), pred_y, y_test))
