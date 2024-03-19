@@ -6,37 +6,71 @@ def get_chat_template(model):
     elif "llama" in model.lower() or "mistral" in model.lower():
         return llama_template
     elif "yi" in model.lower():
-            return yi_template
+        return yi_template
     elif "wizardlm" in model.lower():
         return wizard_template
     elif "tulu" in model.lower():
         return tulu_template
     elif "vicuna" in model.lower():
         return vicuna_template
+    elif "zephyr" in model.lower():
+        return zephyr_template
+    elif "baize" in model.lower():
+        return baize_template
+    elif "stablelm" in model.lower():
+        return stablelm_template
     else:
         print(f"Model {model} not recognized, using default template")
         return default_template
 
+
 def default_template(prompt):
     return prompt
+
 
 def openchat_template(prompt):
     return f"GPT4 Correct User: {prompt}<|end_of_turn|> GPT4 Correct Assistant:"
 
+
 def llama_template(prompt):
     return f"[INST] {prompt} [/INST]"
+
 
 def yi_template(prompt):
     return f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
 
+
 def wizard_template(prompt):
     return f"A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions. USER: {prompt} ASSISTANT:"
+
 
 def tulu_template(prompt):
     return f"<|user|>\n{prompt}\n<|assistant|>\n"
 
+
 def vicuna_template(prompt):
     return f"USER: {prompt} ASSISTANT:"
+
+
+def zephyr_template(prompt):
+    return f"<|system|>\nYou are a friendly chatbot who always responds in the style of a pirate</s>\n<|user|>\n{prompt}</s>\n<|assistant|>\n"
+
+
+def baize_template(prompt):
+    return f"The following is a conversation between a human and an AI assistant named Baize (named after a mythical creature in Chinese folklore). Baize is an open-source AI assistant developed by UCSD and Sun Yat-Sen University. The human and the AI assistant take turns chatting. Human statements start with [|Human|] and AI assistant statements start with [|AI|]. The AI assistant always provides responses in as much detail as possible, and in Markdown format. The AI assistant always declines to engage with topics, questions and instructions related to unethical, controversial, or sensitive issues. Complete the transcript in exactly that format.\n[|Human|]\n{prompt}\n[|AI|]\n"
+
+
+def stablelm_template(prompt):
+    system_prompt = """<|SYSTEM|># StableLM Tuned (Alpha version)
+- StableLM is a helpful and harmless open-source AI language model developed by StabilityAI.
+- StableLM is excited to be able to help the user, but will refuse to do anything that could be considered harmful to the user.
+- StableLM is more than just an information source, StableLM is also able to write poetry, short stories, and make jokes.
+- StableLM will refuse to participate in anything that could harm a human.
+"""
+
+    prompt = f"{system_prompt}<|USER|>{prompt}<|ASSISTANT|>"
+    return prompt
+
 
 def llamaguard_template(prompt):
     return f"""[INST] Task: Check if there is unsafe content in 'User' messages in conversations according our safety policy with the below categories.
