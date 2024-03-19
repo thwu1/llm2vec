@@ -18,7 +18,7 @@ np.random.seed(42)
 
 pwd = os.getcwd()
 
-data = pd.read_csv("{pwd}/data/mmlu_correctness_1k.csv")
+data = pd.read_csv(f"{pwd}/data/mmlu_correctness_1k.csv")
 MODEL_NAMES = [key for key in data.columns]
 print(MODEL_NAMES)
 
@@ -26,6 +26,10 @@ print(MODEL_NAMES)
 def split_and_load(batch_size=256):
     train_data = pd.read_csv(f"{pwd}/data/mmlu_train.csv")
     test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
+
+    max_category = max(train_data["category_id"].max(), test_data["category_id"].max())
+    min_category = min(train_data["category_id"].min(), test_data["category_id"].min())
+    num_categories = max_category - min_category + 1
 
     class CustomDataset(Dataset):
         def __init__(self, data):
@@ -52,7 +56,7 @@ def split_and_load(batch_size=256):
             return len(self.models)
 
         def __getitem__(self, index):
-            return self.models[index], self.prompts[index], self.labels[index]
+            return self.models[index], self.prompts[index], self.labels[index], self.categories[index]
 
         def get_dataloaders(self, batch_size):
             return DataLoader(self, batch_size, shuffle=False)
@@ -67,30 +71,7 @@ def split_and_load(batch_size=256):
     train_loader = train_dataset.get_dataloaders(batch_size)
     test_loader = test_dataset.get_dataloaders(batch_size)
 
-    return num_models, num_prompts, num_classes, train_loader, test_loader
-
-
-class MF(torch.nn.Module):
-    def __init__(self, dim, num_models, num_prompts, num_classes=2):
-        super().__init__()
-        self._name = "MF"
-        self.P = torch.nn.Embedding(num_models, dim)
-        self.Q = torch.nn.Embedding(num_prompts, dim)
-        # self.classifier = nn.Sequential(nn.Linear(dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, num_classes))
-        self.classifier = nn.Sequential(nn.Linear(dim, num_classes))
-
-    def forward(self, model, prompt):
-        p = self.P(model)
-        q = self.Q(prompt)
-        return self.classifier(p * q)
-
-    def get_embedding(self):
-        return self.P.weight.detach().to("cpu").tolist(), self.Q.weight.detach().to("cpu").tolist()
-
-    @torch.no_grad()
-    def predict(self, model, prompt):
-        logits = self.forward(model, prompt)
-        return torch.argmax(logits, dim=1)
+    return num_models, num_prompts, num_classes, num_categories, train_loader, test_loader
 
 
 class TextMF(torch.nn.Module):
@@ -106,7 +87,7 @@ class TextMF(torch.nn.Module):
         # self.classifier = nn.Sequential(nn.Linear(dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, num_classes))
         self.classifier = nn.Sequential(nn.Linear(dim, num_classes))
 
-    def forward(self, model, prompt):
+    def forward(self, model, prompt, category):
         p = self.P(model)
         q = self.text_proj(self.Q(prompt))
         return self.classifier(p * q)
@@ -115,8 +96,35 @@ class TextMF(torch.nn.Module):
         return self.P.weight.detach().to("cpu").tolist(), self.Q.weight.detach().to("cpu").tolist()
 
     @torch.no_grad()
-    def predict(self, model, prompt):
-        logits = self.forward(model, prompt)
+    def predict(self, model, prompt, category):
+        logits = self.forward(model, prompt, category)
+        return torch.argmax(logits, dim=1)
+
+
+class FM(torch.nn.Module):
+    def __init__(self, dim, num_models, num_prompts, num_categories, text_dim=768):
+        super().__init__()
+        self._name = "FM"
+        self.P = torch.nn.Embedding(num_models, dim)
+        self.Q = torch.nn.Embedding(num_prompts, text_dim).requires_grad_(False)
+        embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
+        self.Q.weight.data.copy_(torch.tensor(embeddings))
+        self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, dim))
+        self.category_embedding = torch.nn.Embedding(num_categories, dim)
+        self.classifier = nn.Sequential(nn.Linear(dim, 2))
+
+    def forward(self, model, prompt, category):
+        p = self.P(model)
+        q = self.text_proj(self.Q(prompt))
+        v = self.category_embedding(category)
+        return self.classifier(p * q + q * v + p * v)
+
+    def get_embedding(self):
+        return self.P.weight.detach().to("cpu").tolist(), self.Q.weight.detach().to("cpu").tolist()
+
+    @torch.no_grad()
+    def predict(self, model, prompt, category):
+        logits = self.forward(model, prompt, category)
         return torch.argmax(logits, dim=1)
 
 
@@ -127,15 +135,16 @@ def evaluator(net, test_iter, devices):
     correct = 0
     num_samples = 0
     with torch.no_grad():
-        for models, prompts, labels in test_iter:
+        for models, prompts, labels, categories in test_iter:
             # Assuming devices refer to potential GPU usage
             models = models.to(devices[0])  # Move data to the appropriate device
             prompts = prompts.to(devices[0])
             labels = labels.to(devices[0])
+            categories = categories.to(devices[0])
 
-            logits = net(models, prompts)
+            logits = net(models, prompts, categories)
             loss = ls_fn(logits, labels)  # Calculate the loss
-            pred_labels = net.predict(models, prompts)
+            pred_labels = net.predict(models, prompts, categories)
             correct += (pred_labels == labels).sum().item()
             ls_list.append(loss.item())  # Store the sqrt of MSE (RMSE)
             num_samples += labels.shape[0]
@@ -219,13 +228,14 @@ def train_recsys_rating(
         net.train()  # Set the model to training mode
         train_loss_sum, n = 0.0, 0
         start_time = time.time()
-        for idx, (models, prompts, labels) in enumerate(train_iter):
+        for idx, (models, prompts, labels, categorys) in enumerate(train_iter):
             # Assuming devices refer to potential GPU usage
             models = models.to(devices[0])
             prompts = prompts.to(devices[0])
             labels = labels.to(devices[0])
+            categorys = categorys.to(devices[0])
 
-            output = net(models, prompts)
+            output = net(models, prompts, categorys)
             ls = loss(output, labels)
 
             optimizer.zero_grad()  # Clear the gradients
@@ -272,11 +282,19 @@ def train_recsys_rating(
 
 batch_size = 512
 num_epochs = 100
-num_models, num_prompts, num_classes, train_loader, test_loader = split_and_load()
-mf = TextMF(
-    dim=64,
+num_models, num_prompts, num_classes, num_categories, train_loader, test_loader = split_and_load()
+# mf = TextMF(
+#     dim=64,
+#     num_models=num_models,
+#     num_prompts=num_prompts,
+#     num_classes=num_classes,
+# ).to("cuda")
+# train_recsys_rating(mf, train_loader, test_loader, num_models, num_prompts, batch_size, num_epochs, devices=["cuda"])
+
+fm = FM(
+    dim=10,
     num_models=num_models,
     num_prompts=num_prompts,
-    num_classes=num_classes,
+    num_categories=num_categories,
 ).to("cuda")
-train_recsys_rating(mf, train_loader, test_loader, num_models, num_prompts, batch_size, num_epochs, devices=["cuda"])
+train_recsys_rating(fm, train_loader, test_loader, num_models, num_prompts, batch_size, num_epochs, devices=["cuda"])
