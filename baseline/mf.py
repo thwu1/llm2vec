@@ -87,8 +87,11 @@ class TextMF(torch.nn.Module):
         # self.classifier = nn.Sequential(nn.Linear(dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, num_classes))
         self.classifier = nn.Sequential(nn.Linear(dim, num_classes))
 
-    def forward(self, model, prompt, category):
+    def forward(self, model, prompt, category, alpha=0.1, test_mode=False):
         p = self.P(model)
+        q = self.Q(prompt)
+        if not test_mode:
+            q += torch.randn_like(q) * alpha
         q = self.text_proj(self.Q(prompt))
         return self.classifier(p * q)
 
@@ -97,7 +100,7 @@ class TextMF(torch.nn.Module):
 
     @torch.no_grad()
     def predict(self, model, prompt, category):
-        logits = self.forward(model, prompt, category)
+        logits = self.forward(model, prompt, category, test_mode=True)
         return torch.argmax(logits, dim=1)
 
 
