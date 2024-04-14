@@ -4,6 +4,7 @@ import torch
 import json
 import os
 import tqdm
+import random
 
 pwd = os.getcwd()
 print(pwd)
@@ -31,12 +32,15 @@ def get_input(data):
 
 
 def evaluate(train_ls, test_ls):
+    # random.shuffle(train_ls)
     accu = []
     model_names = []
-    for i in tqdm.tqdm(range(len(train_ls))):
+    NUM_MODEL = len(train_ls)  # Default to be len(train_ls)
+    NUM_NEIGHBORS = 51
+    for i in tqdm.tqdm(range(NUM_MODEL)):
         X_train, y_train = get_input(train_ls[i])
         X_test, y_test = get_input(test_ls[i])
-        neigh = KNeighborsClassifier(n_neighbors=5)
+        neigh = KNeighborsClassifier(n_neighbors=NUM_NEIGHBORS)
         neigh.fit(X_train, y_train)
         pred_y = neigh.predict(X_test).tolist()
         bool_ls = list(map(lambda x, y: int(x == y), pred_y, y_test))
