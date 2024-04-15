@@ -30,7 +30,9 @@ def convert_to_label(output):
         raise ValueError(f"Output {output} not recognized")
 
 
-data = load_dataset("RZ412/mmlu_responses_1k")["train"]
+DATASET_NAME = "RZ412/mmlu_responses_1k_augmented"
+
+data = load_dataset(DATASET_NAME)["train"]
 # print(data[0])
 categories = [item["subject"] for item in data]
 prompts = [item["test_questions"] for item in data]
@@ -51,9 +53,18 @@ def model_to_label(model):
 correctness = []
 for item in data:
     # print(item)
-    assert all([item["answers"][id]["model"] == model_name for id, model_name in enumerate(MODEL_NAME)])
+    assert all(
+        [
+            item["answers"][id]["model"] == model_name
+            for id, model_name in enumerate(MODEL_NAME)
+        ]
+    )
     correctness.append(
-        [convert_to_label(item["answers"][id]["answer"]) == convert_to_label(item["reference_answers"]) for id, model_name in enumerate(MODEL_NAME)]
+        [
+            convert_to_label(item["answers"][id]["answer"])
+            == convert_to_label(item["reference_answers"])
+            for id, model_name in enumerate(MODEL_NAME)
+        ]
     )
 
 # use df to save the correctness matrix
@@ -72,14 +83,28 @@ def train_test_split(test_ratio=0.1, seed=42):
     train_df = df.iloc[:split_index].reset_index(drop=True)
     test_df = df.iloc[split_index:].reset_index(drop=True)
 
-    model_column_indices = [train_df.columns.get_loc(col) for col in train_df.columns[1:]]
+    model_column_indices = [
+        train_df.columns.get_loc(col) for col in train_df.columns[1:]
+    ]
 
     # Convert train_df and test_df to tuples
-    train_tuples = [(row[1][0], train_df.columns[col_idx], row[1][col_idx]) for row in train_df.iterrows() for col_idx in model_column_indices]
-    test_tuples = [(row[1][0], test_df.columns[col_idx], row[1][col_idx]) for row in test_df.iterrows() for col_idx in model_column_indices]
+    train_tuples = [
+        (row[1][0], train_df.columns[col_idx], row[1][col_idx])
+        for row in train_df.iterrows()
+        for col_idx in model_column_indices
+    ]
+    test_tuples = [
+        (row[1][0], test_df.columns[col_idx], row[1][col_idx])
+        for row in test_df.iterrows()
+        for col_idx in model_column_indices
+    ]
 
-    train_df_tuples = pd.DataFrame(train_tuples, columns=["prompt_id", "model_name", "label"])
-    test_df_tuples = pd.DataFrame(test_tuples, columns=["prompt_id", "model_name", "label"])
+    train_df_tuples = pd.DataFrame(
+        train_tuples, columns=["prompt_id", "model_name", "label"]
+    )
+    test_df_tuples = pd.DataFrame(
+        test_tuples, columns=["prompt_id", "model_name", "label"]
+    )
 
     return train_df_tuples, test_df_tuples
 
@@ -91,19 +116,39 @@ train_df_tuples, test_df_tuples = train_test_split()
 train_df_tuples["category"] = [categories[i] for i in train_df_tuples["prompt_id"]]
 test_df_tuples["category"] = [categories[i] for i in test_df_tuples["prompt_id"]]
 
-train_df_tuples["category_id"] = [category_to_label(category) for category in train_df_tuples["category"]]
-test_df_tuples["category_id"] = [category_to_label(category) for category in test_df_tuples["category"]]
+train_df_tuples["category_id"] = [
+    category_to_label(category) for category in train_df_tuples["category"]
+]
+test_df_tuples["category_id"] = [
+    category_to_label(category) for category in test_df_tuples["category"]
+]
 
-train_df_tuples["model_id"] = [model_to_label(model) for model in train_df_tuples["model_name"]]
-test_df_tuples["model_id"] = [model_to_label(model) for model in test_df_tuples["model_name"]]
+train_df_tuples["model_id"] = [
+    model_to_label(model) for model in train_df_tuples["model_name"]
+]
+test_df_tuples["model_id"] = [
+    model_to_label(model) for model in test_df_tuples["model_name"]
+]
 
 train_df_tuples["prompt"] = [prompts[i] for i in train_df_tuples["prompt_id"]]
 test_df_tuples["prompt"] = [prompts[i] for i in test_df_tuples["prompt_id"]]
 
-col_order = ["prompt_id", "model_id", "category_id", "label", "prompt", "model_name", "category"]
+col_order = [
+    "prompt_id",
+    "model_id",
+    "category_id",
+    "label",
+    "prompt",
+    "model_name",
+    "category",
+]
 
-train_df_tuples.sample(frac=1, random_state=42).reindex(columns=col_order).to_csv(f"{pwd}/data/mmlu_train.csv", index=False)
-test_df_tuples.sort_values(by="prompt_id").reindex(columns=col_order).to_csv(f"{pwd}/data/mmlu_test.csv", index=False)
+train_df_tuples.sample(frac=1, random_state=42).reindex(columns=col_order).to_csv(
+    f"{pwd}/data/mmlu_train.csv", index=False
+)
+test_df_tuples.sort_values(by="prompt_id").reindex(columns=col_order).to_csv(
+    f"{pwd}/data/mmlu_test.csv", index=False
+)
 
 # precompute the embeddings
 model = SentenceTransformer("all-mpnet-base-v2")

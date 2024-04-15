@@ -5,3 +5,8 @@ __pycache__
 *.safetensors
 wandb
 *.csv
+*.npy
+*.arrow
+mmlu_response_generation
+data
+*.ipynb
