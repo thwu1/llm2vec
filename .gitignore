@@ -9,3 +9,4 @@ wandb
 *.arrow
 mmlu_response_generation
 data
+*.ipynb

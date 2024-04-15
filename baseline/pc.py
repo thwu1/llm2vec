@@ -1,93 +1,72 @@
 import torch
 from torch import nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
+from tqdm import tqdm
+import numpy as np
 
 
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_sizes, output_size):  # Hidden size is a list
-        super(MLP, self).__init__()
-        self.layers = nn.ModuleList()
-        self.layers.append(nn.Linear(input_size, hidden_sizes[0]))
+    def __init__(self, input_size, hidden_sizes, output_size):  # hidden_sizes is a list
+        super().__init__()
+        self.mlp = nn.Sequential()
+        self.mlp.append(nn.Linear(input_size, hidden_sizes[0]))
+        self.mlp.append(nn.ReLU())
         for i in range(1, len(hidden_sizes)):
-            self.layers.append(nn.Linear(hidden_sizes[i - 1], hidden_sizes[i]))
-        self.layers.append(nn.Linear(hidden_sizes[-1], output_size))
+            self.mlp.append(nn.Linear(hidden_sizes[i - 1], hidden_sizes[i]))
+            self.mlp.append(nn.ReLU())
+        self.mlp.append(nn.Linear(hidden_sizes[-1], output_size))
 
     def forward(self, x):
-        original_shape = x.shape  # Save the original shape
-        if len(original_shape) > 2:
-            # Reshape to combine 'batch_size' and 'len' into a single dimension
-            x = x.view(-1, original_shape[-1])
-
-        for layer in self.layers[:-1]:
-            x = F.relu(layer(x))
-        x = self.layers[-1](x)
-
-        if (
-            len(original_shape) > 2
-        ):  # Reshape back to the original batch and num dimensions
-            x = x.view(original_shape[0], original_shape[1], -1)
-
+        x = self.mlp(x)
         return x
-
-
+    
 class Encoder(nn.Module):  # Input a sequence of questions and output z
-    def __init__(self, q_dim=768, z_dim=128):
+    def __init__(self, c_dim, z_dim):
         super().__init__()
-        self.mean_network = MLP(
-            input_size=q_dim, hidden_sizes=[512, 256], output_size=z_dim
-        )
-        self.variance_network = MLP(
-            input_size=q_dim, hidden_sizes=[512, 256], output_size=z_dim
-        )
+        self.mean_network = MLP(input_size=c_dim, hidden_sizes=[512, 256], output_size=z_dim)
+        self.variance_network = MLP(input_size=c_dim, hidden_sizes=[512, 256], output_size=z_dim)
 
-    def forward(
-        self, qs
-    ):  # Input multiple instances of context and output a latent representation of the task
-        # Input qs: [batch_size, len, prompt_embed_dim], batch_size = num_models
-        self.calculate_posterior(qs)
-        return self.z  # Output Shape: [batch_size, len, z_dim]
+    def forward(self, cs):  # Input multiple instances of context and output a latent representation of the task
+        # Input: cs(context) of shape (batch_size, len, c_dim), batch_size = num_models, len = sample_subset_size
+        mu = self.mean_network(cs)  # Shape: [batch_size(num_models), len(num_sample), z_dim]
+        sigma_squared = F.softplus(self.variance_network(cs))  # Shape: [batch_size(num_models), len(num_sample), z_dim]
+        bs, length, z_dim = list(mu.shape)
 
-    def sample_z(self):  # Sample from a multivariate gaussian
-        # TODO: Rewrite logic and need to fit shape
-        posteriors = [
-            torch.distributions.Normal(m, torch.sqrt(s))
-            for m, s in zip(torch.unbind(self.z_means), torch.unbind(self.z_vars))
-        ]
+        z_params = [
+            self._product_of_gaussians(m, s) for m, s in zip(torch.unbind(mu), torch.unbind(sigma_squared))
+        ]  # Shape: tuple of 2 [batch_size(num_models), len(num_sample), z_dim]
+        zs = []
+        logprobs = []
+        z_means = torch.stack([p[0] for p in z_params])
+        z_vars = torch.stack([p[1] for p in z_params])
+        for z_mean, z_var in zip(z_means, z_vars):
+            tmp_z, tmp_prob = self.sample_z(z_mean, z_var)
+            zs.append(tmp_z)
+            logprobs.append(tmp_prob)
+        zs = torch.stack(zs)
+        logprobs = torch.stack(logprobs)
+        return zs, logprobs, z_means, z_vars
+
+    def sample_z(self, z_means, z_vars):  # Sample from a multivariate gaussian
+        posteriors = [torch.distributions.Normal(m, torch.sqrt(s)) for m, s in zip(torch.unbind(z_means), torch.unbind(z_vars))]
         z = [d.rsample() for d in posteriors]
-        self.z = torch.stack(z)
+        prob = [d.log_prob(z_) for d, z_ in zip(posteriors, z)]
+        return torch.stack(z), torch.stack(prob)
 
     def _product_of_gaussians(self, mus, sigmas_squared):
-        # TODO: Shape Matching
-        """compute mu, sigma of product of gaussians"""
         sigmas_squared = torch.clamp(sigmas_squared, min=1e-7)
-        sigma_squared = 1.0 / torch.sum(torch.reciprocal(sigmas_squared), dim=0)
-        mu = sigma_squared * torch.sum(mus / sigmas_squared, dim=0)
-        return mu, sigma_squared
-
-    def calculate_posterior(
-        self, context
-    ):  # Calculate posterior gaussian from gaussian factors given by c's
-        """compute q(z|c) as a function of input context and sample new z from it"""
-        # Input context: [batch_size(num_models), len(num_sample), prompt_embed_dim]
-        mu = self.mean_network(context)  # Shape: [batch_size(num_models), len(num_sample), z_dim]
-        sigma_squared = F.softplus(
-            self.variance_network(context)
-        )  # Shape: [batch_size(num_models), len(num_sample), z_dim]
-        # TODO: Shape Matching
-        z_params = [
-            self._product_of_gaussians(m, s)
-            for m, s in zip(torch.unbind(mu), torch.unbind(sigma_squared))
-        ]  # Shape: tuple of 2 [batch_size(num_models), len(num_sample), z_dim]
-        self.z_means = torch.stack([p[0] for p in z_params])
-        self.z_vars = torch.stack([p[1] for p in z_params])
-        self.sample_z()
+        prod_sigma_squared_inv = torch.cumsum(torch.reciprocal(sigmas_squared), dim=0)
+        prod_sigma_squared = 1.0 / prod_sigma_squared_inv
+        mu = prod_sigma_squared * torch.cumsum(mus / sigmas_squared, dim=0)
+        return mu, prod_sigma_squared
 
 
 class Decoder(nn.Module):  # Get input from encoder which is z and a new question, concat or project to same dim and dot product
-    def __init__(self, q_dim=768, z_dim=128):
+    def __init__(self, q_dim, z_dim):
+        super().__init__()
         self.network = MLP(
             input_size=z_dim + q_dim, hidden_sizes=[128, 16], output_size=1
         )
@@ -101,19 +80,18 @@ class Decoder(nn.Module):  # Get input from encoder which is z and a new questio
         )  # concat z and question, x: [batch_size, len, (z_dim + q_dim)]
         return self.network(x)  # Output 1D binary result 0,1
 
-
 class CustomDataset(Dataset):
     # want "for batch in dataloader, and batch = (x,y)"
     # batch_size = num_model
     # x: (batch_size, num_total_questions, question_embedding_dim)
     # y: (batch_size, num_total_questions)
-    def __init__(self):
+    def __init__(self, sentence_transformer):
         data = load_dataset("RZ412/mmlu_responses_1k_augmented")
         num_models = len(data['train'][0]['answers'])
 
         all_questions = data['train']['test_questions']
-        model = SentenceTransformer('all-mpnet-base-v2')
-        question_vectors = model.encode(all_questions)
+        model = SentenceTransformer(sentence_transformer)
+        question_vectors = model.encode(all_questions, show_progress_bar=True)
         x = torch.tensor(question_vectors)
         x = x.unsqueeze(0).repeat(num_models, 1, 1)
 
@@ -139,8 +117,8 @@ class CustomDataset(Dataset):
         
         return x, y
 
-class Trainer:  # autoregressively input k question and get k+1_th questions' answer
-    def __init__(self, encoder, decoder, train_dataloader, test_dataloader=None):
+class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
+    def __init__(self, encoder, decoder, subset_length, train_dataloader, test_dataloader=None, use_kl=True):
         self.encoder = encoder
         self.decoder = decoder
         self.train_dataloader = train_dataloader
@@ -148,51 +126,150 @@ class Trainer:  # autoregressively input k question and get k+1_th questions' an
         self.optimizer = torch.optim.Adam(
             list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3
         )
-        self.loss_fn = nn.CrossEntropyLoss()
-        self.use_kl = True
+        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.subset_length = subset_length
+        self.use_kl = use_kl
 
     def train(self, epochs=10):
-        for epoch in range(len(epochs)):
+        for epoch in range(epochs):
+            print(f"Epoch {epoch+1}: ")
             self.train_epoch(self.train_dataloader)
 
             if self.test_dataloader:
                 eval_results = self.evaluate(self.test_dataloader)
-                print(eval_results)
 
-    def kl_loss(self): # TODO: Rewrite
-        prior = torch.distributions.Normal(torch.zeros(self.latent_dim), torch.ones(self.latent_dim))
+    def kl_loss(self, z_means, z_vars):
+        #TODO: KL Loss extremely large
+        batch_size, subset_length, z_dim = z_means.shape
+        prior = torch.distributions.Normal(torch.zeros(z_dim), torch.eye(z_dim))
         posteriors = [torch.distributions.Normal(mu, torch.sqrt(var)) 
-                      for mu, var in zip(torch.unbind(self.z_means), torch.unbind(self.z_vars))]
+                      for mu, var in zip(torch.unbind(z_means), torch.unbind(z_vars))]
         kl_divs = [
             torch.distributions.kl.kl_divergence(post, prior) for post in posteriors
         ]
         kl_div_sum = torch.sum(torch.stack(kl_divs))
         return kl_div_sum
 
-    def train_epoch(self, dataloader, subset_length=50):
-        for batch in dataloader:
+    def train_epoch(self, dataloader):
+        # TODO: Within each batch can iterate through different subset samples
+        total_loss = 0
+        total_accuracy = 0
+        num_batches = 0
+        for batch in tqdm(dataloader):
             # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
             p_embeds, labels = batch
-
             batch_size, num_total_question, q_dim = p_embeds.shape
-            #TODO: Need to make same indices for x and y
-            indices_x = torch.randint(num_total_question, (batch_size, subset_length))
+            # TODO: Add an option of random sampling of subset size (Exponential Distribution, clamp at 30-900)
+            subset_indices = torch.randint(num_total_question, (batch_size, self.subset_length))
             # Shape: [batch_size, subset_length, prompt_embed_dim]
-            p_embeds = torch.gather(p_embeds, 1, indices_x.unsqueeze(-1).expand(-1, -1, q_dim))
-            indices_y = torch.randint(num_total_question, size=(batch_size, subset_length))
-            labels = torch.gather(labels, 1, indices_y) # Shape: [batch_size, subset_length]
+            p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
+            # Shape: [batch_size, subset_length]
+            labels = torch.gather(labels, 1, subset_indices)
+            cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
 
-            zs, posteriors = self.encoder.sample_z(p_embeds, labels)
-            preds = self.decoder(zs[:, :-1], p_embeds[:, 1:])
-            loss = self.loss_fn(preds, labels[:, 1:])
+            zs, logprobs, z_means, z_vars = self.encoder(cs)
+            posteriors = torch.exp(logprobs) # TODO: Logprobs incorrect
+            # print(posteriors)
+            preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
+            loss = self.loss_fn(preds, labels[:, 1:].float())
+            # print(loss)
             loss = (loss * posteriors[:, :-1]).mean()
+            # print(loss)
             if self.use_kl:
-                loss += self.kl_loss()
+                loss += self.kl_loss(z_means, z_vars)
+                # print(loss)
+            total_loss += loss.item()
 
+            # Calculate accuracy
+            probabilities = torch.sigmoid(preds)
+            predicted_labels = (probabilities > 0.5).float()
+            correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
+            accuracy = correct_predictions.mean()
+                
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+            num_batches += 1
+            # print(f'Loss: {loss}')
+
+        # print(f'Training Loss: {avg_loss}')
+        print(f'Training Accuracy: {accuracy}')
 
     def evaluate(self, dataloader):
-        for batch in dataloader:
-            pass
+        # TODO: Add one more accuracy evaluation method (max sample and evaluate all questions left)
+        self.encoder.eval()
+        self.decoder.eval()
+        
+        total_loss = 0
+        total_accuracy = 0
+        num_batches = 0
+        with torch.no_grad():
+            for batch in dataloader:
+                p_embeds, labels = batch
+                batch_size, num_total_question, q_dim = p_embeds.shape
+
+                subset_indices = torch.randint(num_total_question, (batch_size, self.subset_length))
+                p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
+                labels = torch.gather(labels, 1, subset_indices)
+
+                cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
+                zs, logprobs, z_means, z_vars = self.encoder(cs)
+
+                preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
+                loss = self.loss_fn(preds, labels[:, 1:].float())
+                loss = (loss * torch.exp(logprobs[:, :-1])).mean()  # Apply posterior as weights
+                if self.use_kl:
+                    loss += self.kl_loss(z_means, z_vars)
+
+                # Calculate accuracy
+                probabilities = torch.sigmoid(preds)
+                predicted_labels = (probabilities > 0.5).float()
+                correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
+                accuracy = correct_predictions.mean()
+                total_accuracy += accuracy
+                    
+                total_loss += loss.item()
+                num_batches += 1
+
+            avg_loss = total_loss / num_batches if num_batches > 0 else 0
+            avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
+            # print(f'Test Loss: {avg_loss}')
+            print(f'Test Accuracy: {avg_accuracy}')
+            
+            self.encoder.train()
+            self.decoder.train()
+            
+            return avg_loss
+
+def train_test_split(dataset, test_size=0.1, shuffle=True):
+    indices = list(range(len(dataset)))
+    if shuffle:
+        np.random.shuffle(indices)
+    
+    split_idx = int(len(dataset) * (1 - test_size))
+    
+    train_indices, test_indices = indices[:split_idx], indices[split_idx:]
+    
+    train_subset = Subset(dataset, train_indices)
+    test_subset = Subset(dataset, test_indices)
+    
+    return train_subset, test_subset
+
+BATCH_SIZE = 256
+# TODO: Try OpenAI's Ada Embedding (remember to cache)
+SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
+EMBEDDING_DIM = 768
+Z_DIM = 64
+SUBSET_LENGTH = 50
+print("Start Initializing Dataset...")
+dataset = CustomDataset(sentence_transformer=SENTENCE_TRANSFORMER)
+print("Finish Initializing Dataset")
+train_subset, test_subset = train_test_split(dataset, test_size=0.2)
+train_dataloader = DataLoader(dataset=train_subset, batch_size=BATCH_SIZE, shuffle=True)
+test_dataloader = DataLoader(dataset=test_subset, batch_size=BATCH_SIZE, shuffle=False)
+encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM)
+decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
+# TODO: Try using KL Loss
+trainer = Trainer(encoder, decoder, SUBSET_LENGTH, train_dataloader, test_dataloader, use_kl=True)
+
+trainer.train(epochs=20)
