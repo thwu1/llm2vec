@@ -184,8 +184,8 @@ class CustomDataset(Dataset):
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
     def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, 
                  use_kl=True, kl_weight=1, device='cpu'):
-        self.encoder = encoder.to(device)
-        self.decoder = decoder.to(device)
+        self.encoder = encoder
+        self.decoder = decoder
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
         self.optimizer = torch.optim.Adam(
@@ -229,8 +229,8 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 indices = torch.randperm(num_total_question)
             p_embeds = p_embeds[:, indices, :]
             labels = labels[:, indices]
-            p_embeds = p_embeds.to(self.device)
-            labels = labels.to(self.device)
+            p_embeds = p_embeds
+            labels = labels
 
             for i in range(0, num_total_question, self.sample_length):
                 p_embeds_sample = p_embeds[:, i:i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
@@ -289,8 +289,8 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 indices = torch.randperm(num_total_question)
             p_embeds = p_embeds[:, indices, :]
             labels = labels[:, indices]
-            p_embeds = p_embeds.to(self.device)
-            labels = labels.to(self.device)
+            p_embeds = p_embeds
+            labels = labels
 
             one_batch_accuracies = []
             for i in range(0, num_total_question, self.sample_length):
@@ -460,8 +460,8 @@ print("Finish Initializing Dataset")
 # train_subset, test_subset = train_test_split(dataset, test_size=0.2)
 train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
 test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM).to(device)
-decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM).to(device)
+encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM)
+decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
 trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, test_dataloader, 
                   use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device)
 
