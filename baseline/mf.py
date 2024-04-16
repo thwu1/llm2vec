@@ -133,6 +133,7 @@ class TextMF(torch.nn.Module):
         if not test_mode:
             q += torch.randn_like(q) * self.alpha
         q = self.text_proj(q)
+
         return self.classifier(p * q)
 
     def get_embedding(self):
