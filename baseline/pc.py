@@ -10,11 +10,11 @@ import pickle
 import pandas as pd
 import random
 import os
+import argparse
 
 
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_sizes, output_size, 
-                 linear=False, layernorm=False):  # hidden_sizes is a list
+    def __init__(self, input_size, hidden_sizes, output_size, linear=False, layernorm=False):  # hidden_sizes is a list
         super().__init__()
         self.mlp = nn.Sequential()
         self.mlp.append(nn.Linear(input_size, hidden_sizes[0]))
@@ -29,9 +29,9 @@ class MLP(nn.Module):
         self.mlp.append(nn.Linear(hidden_sizes[-1], output_size))
 
     def forward(self, x):
-        x = self.mlp(x)
-        return x
-    
+        return self.mlp(x)
+
+
 class Encoder(nn.Module):  # Input a sequence of questions and output z
     # TODO: Try LayerNorm
     def __init__(self, c_dim, z_dim):
@@ -77,63 +77,61 @@ class Encoder(nn.Module):  # Input a sequence of questions and output z
 class Decoder(nn.Module):  # Get input from encoder which is z and a new question, concat or project to same dim and dot product
     def __init__(self, q_dim, z_dim):
         super().__init__()
-        self.network = MLP(
-            input_size=z_dim + q_dim, hidden_sizes=[128, 16], output_size=1
-        )
+        self.network = MLP(input_size=z_dim + q_dim, hidden_sizes=[128, 16], output_size=1)
 
     def forward(self, zs, qs):
         # zs: [batch_size, len, z_dim]
         # qs: [batch_size, len, q_dim], batch_size = num_models
         # return [batch_size, len]
-        x = torch.cat(
-            (zs, qs), dim=-1
-        )  # concat z and question, x: [batch_size, len, (z_dim + q_dim)]
+        x = torch.cat((zs, qs), dim=-1)  # concat z and question, x: [batch_size, len, (z_dim + q_dim)]
         return self.network(x)  # Output 1D binary result 0,1
+
 
 def generate_train_test_split(sentence_transformer, test_size=0.2, store=False, read=False):
     if read:
-        with open('../data/model_order_pc.pkl', 'rb') as file:
+        with open("../data/model_order_pc.pkl", "rb") as file:
             model_order = pickle.load(file)
-        train_x = torch.load('../data/train_x_pc.pth')
-        train_y = torch.load('../data/train_y_pc.pth')
-        test_x = torch.load('../data/test_x_pc.pth')
-        test_y = torch.load('../data/test_y_pc.pth')
+        train_x = torch.load("../data/train_x_pc.pth")
+        train_y = torch.load("../data/train_y_pc.pth")
+        test_x = torch.load("../data/test_x_pc.pth")
+        test_y = torch.load("../data/test_y_pc.pth")
         return model_order, train_x, test_x, train_y, test_y
-    
-    data = load_dataset("RZ412/mmlu_responses_1k_augmented")
-    num_models = len(data['train'][0]['answers'])
 
-    all_questions = data['train']['test_questions']
+    data = load_dataset("RZ412/mmlu_responses_1k_augmented")
+    num_models = len(data["train"][0]["answers"])
+
+    all_questions = data["train"]["test_questions"]
     model = SentenceTransformer(sentence_transformer)
     question_vectors = model.encode(all_questions, show_progress_bar=True)
     x = torch.tensor(question_vectors)
     x = x.unsqueeze(0).repeat(num_models, 1, 1)
 
     y = []
-    for row in data['train']:
-        model_order = [element['model'] for element in row['answers']]
-        option_map = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
-        ref_answer = option_map[row['reference_answers']]
-        correctness_result = [int(element['answer'] == ref_answer) for element in row['answers']]
+    for row in data["train"]:
+        model_order = [element["model"] for element in row["answers"]]
+        option_map = {0: "A", 1: "B", 2: "C", 3: "D"}
+        ref_answer = option_map[row["reference_answers"]]
+        correctness_result = [int(element["answer"] == ref_answer) for element in row["answers"]]
         y.append(correctness_result)
-    y = torch.tensor(y).transpose(0,1)
+    y = torch.tensor(y).transpose(0, 1)
 
     num_models, num_total_question, q_dim = x.shape
     indices = torch.randperm(num_models)
     x_shuffled, y_shuffled = x[indices], y[indices]
     split_idx = int(num_total_question * (1 - test_size))
-    train_x, test_x = x_shuffled[:,:split_idx,:], x_shuffled[:,split_idx:,:]
-    train_y, test_y = y_shuffled[:,:split_idx], y_shuffled[:,split_idx:]
+    train_x, test_x = x_shuffled[:, :split_idx, :], x_shuffled[:, split_idx:, :]
+    train_y, test_y = y_shuffled[:, :split_idx], y_shuffled[:, split_idx:]
 
     if store:
-        with open(f'../data/model_order_pc.pkl', 'wb') as file:
+        with open(f"../data/model_order_pc.pkl", "wb") as file:
             pickle.dump(model_order, file)
-        torch.save(train_x, f'../data/train_x_pc.pth')
-        torch.save(train_y, f'../data/train_y_pc.pth')
-        torch.save(test_x, f'../data/test_x_pc.pth')
-        torch.save(test_y, f'../data/test_y_pc.pth')
-        
+        torch.save(train_x, f"../data/train_x_pc.pth")
+        torch.save(train_y, f"../data/train_y_pc.pth")
+        torch.save(test_x, f"../data/test_x_pc.pth")
+        torch.save(test_y, f"../data/test_y_pc.pth")
+
     return model_order, train_x, test_x, train_y, test_y
+
 
 def load_train_test_split(base_model_only):
     # TODO: Write a train test split from reading file with unified order
@@ -149,12 +147,8 @@ def load_train_test_split(base_model_only):
     # print(test_data.head())
 
     if base_model_only:
-        train_data = train_data[
-            ~train_data["model_name"].str.contains("vote|moe")
-        ].reset_index(drop=True)
-        test_data = test_data[
-            ~test_data["model_name"].str.contains("vote|moe")
-        ].reset_index(drop=True)
+        train_data = train_data[~train_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
+        test_data = test_data[~test_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
         # print(train_data.head())
         # print(test_data.head())
 
@@ -168,7 +162,7 @@ class CustomDataset(Dataset):
     # batch_size = num_model
     # x: (batch_size, num_total_questions, question_embedding_dim)
     # y: (batch_size, num_total_questions)
-    def __init__(self,x,y):
+    def __init__(self, x, y):
         self.data = x
         self.labels = y
 
@@ -178,19 +172,17 @@ class CustomDataset(Dataset):
     def __getitem__(self, idx):
         x = self.data[idx]  # Shape (num_models, question_embedding_dim)
         y = self.labels[idx]  # Shape (num_models)
-        
+
         return x, y
 
+
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
-    def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, 
-                 use_kl=True, kl_weight=1, device='cpu'):
-        self.encoder = encoder
-        self.decoder = decoder
+    def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, use_kl=True, kl_weight=1, device="cpu"):
+        self.encoder = encoder.to(device)
+        self.decoder = decoder.to(device)
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
-        self.optimizer = torch.optim.Adam(
-            list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3
-        )
+        self.optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3)
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.sample_length = sample_length
         self.use_kl = use_kl
@@ -233,8 +225,8 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
             labels = labels
 
             for i in range(0, num_total_question, self.sample_length):
-                p_embeds_sample = p_embeds[:, i:i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
-                labels_sample = labels[:, i:i + self.sample_length]     # Shape: [batch_size, sample_size]
+                p_embeds_sample = p_embeds[:, i : i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
+                labels_sample = labels[:, i : i + self.sample_length]  # Shape: [batch_size, sample_size]
                 # print(p_embeds_sample.shape, labels_sample.shape)
 
                 # TODO: Add an option of random sampling of subset size (Exponential Distribution, clamp at 30-900)
@@ -261,7 +253,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 predicted_labels = (probabilities > 0.5).float()
                 correct_predictions = (predicted_labels == labels_sample[:, 1:].float()).float()
                 accuracy = correct_predictions.mean()
-                    
+
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
@@ -269,7 +261,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 # print(f'Loss: {loss}')
 
         # print(f'Training Loss: {loss}')
-        print(f'Training Accuracy: {accuracy}')
+        print(f"Training Accuracy: {accuracy}")
 
     def evaluate(self, dataloader):
         # TODO: Add one more accuracy evaluation method (max sample and evaluate all questions left)
@@ -294,8 +286,8 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
             one_batch_accuracies = []
             for i in range(0, num_total_question, self.sample_length):
-                p_embeds_sample = p_embeds[:, i:i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
-                labels_sample = labels[:, i:i + self.sample_length]     # Shape: [batch_size, sample_size]
+                p_embeds_sample = p_embeds[:, i : i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
+                labels_sample = labels[:, i : i + self.sample_length]  # Shape: [batch_size, sample_size]
 
                 # TODO: Add an option of random sampling of subset size (Exponential Distribution, clamp at 30-900)
 
@@ -337,132 +329,145 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         #         labels = labels.to(self.device)
         #         batch_size, num_total_question, q_dim = p_embeds.shape
 
-        #         subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length))
-        #         p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
-        #         labels = torch.gather(labels, 1, subset_indices)
+            #         subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length))
+            #         p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
+            #         labels = torch.gather(labels, 1, subset_indices)
 
-        #         cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
-        #         zs, logprobs, z_means, z_vars = self.encoder(cs)
+            #         cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
+            #         zs, logprobs, z_means, z_vars = self.encoder(cs)
 
-        #         preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
-        #         loss = self.loss_fn(preds, labels[:, 1:].float())
-        #         loss = (loss * torch.exp(logprobs[:, :-1])).mean()  # Apply posterior as weights
-        #         if self.use_kl:
-        #             loss += self.kl_loss(z_means, z_vars)
+            #         preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
+            #         loss = self.loss_fn(preds, labels[:, 1:].float())
+            #         loss = (loss * torch.exp(logprobs[:, :-1])).mean()  # Apply posterior as weights
+            #         if self.use_kl:
+            #             loss += self.kl_loss(z_means, z_vars)
 
-        #         # Calculate accuracy
-        #         probabilities = torch.sigmoid(preds)
-        #         predicted_labels = (probabilities > 0.5).float()
-        #         correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
-        #         accuracy = correct_predictions.mean()
-        #         total_accuracy += accuracy
-                    
-        #         total_loss += loss.item()
-        #         num_batches += 1
+            #         # Calculate accuracy
+            #         probabilities = torch.sigmoid(preds)
+            #         predicted_labels = (probabilities > 0.5).float()
+            #         correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
+            #         accuracy = correct_predictions.mean()
+            #         total_accuracy += accuracy
 
-        avg_loss = total_loss / num_batches if num_batches > 0 else 0
-        avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
-        # print(f'Test Loss: {avg_loss}')
-        print(f'Test Accuracy: {avg_accuracy}')
+            #         total_loss += loss.item()
+            #         num_batches += 1
 
-        # Max sample and compute accuracy of all questions left
-        # total_loss = 0
-        # total_accuracy = 0
-        # num_batches = 0
-        # with torch.no_grad():
-        #     for batch in dataloader:
-        #         first_batch_data, first_batch_labels = batch
-        #         batch_size, num_total_question, q_dim = first_batch_data.shape
+            avg_loss = total_loss / num_batches if num_batches > 0 else 0
+            avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
+            # print(f'Test Loss: {avg_loss}')
+            print(f"Test Accuracy: {avg_accuracy}")
 
-        #         cs = torch.cat((first_batch_data, first_batch_labels.unsqueeze(-1)), dim=-1)
-        #         zs, logprobs, z_means, z_vars = self.encoder(cs)
-        #         break
-        #     # first_batch = True
-        #     for batch in dataloader:
-        #         # if first_batch:
-        #         #     first_batch = False
-        #         #     continue
+            # Max sample and compute accuracy of all questions left
+            # total_loss = 0
+            # total_accuracy = 0
+            # num_batches = 0
+            # with torch.no_grad():
+            #     for batch in dataloader:
+            #         first_batch_data, first_batch_labels = batch
+            #         batch_size, num_total_question, q_dim = first_batch_data.shape
 
-        #         p_embeds, labels = batch
-        #         batch_size, num_total_question, q_dim = p_embeds.shape
+            #         cs = torch.cat((first_batch_data, first_batch_labels.unsqueeze(-1)), dim=-1)
+            #         zs, logprobs, z_means, z_vars = self.encoder(cs)
+            #         break
+            #     # first_batch = True
+            #     for batch in dataloader:
+            #         # if first_batch:
+            #         #     first_batch = False
+            #         #     continue
 
-        #         subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length))
-        #         p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
-        #         labels = torch.gather(labels, 1, subset_indices)
+            #         p_embeds, labels = batch
+            #         batch_size, num_total_question, q_dim = p_embeds.shape
 
-        #         cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
-        #         zs, logprobs, z_means, z_vars = self.encoder(cs)
+            #         subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length))
+            #         p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
+            #         labels = torch.gather(labels, 1, subset_indices)
 
-        #         preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
-        #         loss = self.loss_fn(preds, labels[:, 1:].float())
-        #         loss = (loss * torch.exp(logprobs[:, :-1])).mean()  # Apply posterior as weights
-        #         if self.use_kl:
-        #             loss += self.kl_loss(z_means, z_vars)
+            #         cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
+            #         zs, logprobs, z_means, z_vars = self.encoder(cs)
 
-        #         # Calculate accuracy
-        #         probabilities = torch.sigmoid(preds)
-        #         predicted_labels = (probabilities > 0.5).float()
-        #         correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
-        #         accuracy = correct_predictions.mean()
-        #         total_accuracy += accuracy
-                    
-        #         total_loss += loss.item()
-        #         num_batches += 1
+            #         preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
+            #         loss = self.loss_fn(preds, labels[:, 1:].float())
+            #         loss = (loss * torch.exp(logprobs[:, :-1])).mean()  # Apply posterior as weights
+            #         if self.use_kl:
+            #             loss += self.kl_loss(z_means, z_vars)
 
-        #     avg_loss = total_loss / num_batches if num_batches > 0 else 0
-        #     avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
-        #     # print(f'Test Loss: {avg_loss}')
-        #     print(f'Test Accuracy: {avg_accuracy}')
+            #         # Calculate accuracy
+            #         probabilities = torch.sigmoid(preds)
+            #         predicted_labels = (probabilities > 0.5).float()
+            #         correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
+            #         accuracy = correct_predictions.mean()
+            #         total_accuracy += accuracy
 
-        self.encoder.train()
-        self.decoder.train()
-            
-        return avg_loss
+            #         total_loss += loss.item()
+            #         num_batches += 1
+
+            #     avg_loss = total_loss / num_batches if num_batches > 0 else 0
+            #     avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
+            #     # print(f'Test Loss: {avg_loss}')
+            #     print(f'Test Accuracy: {avg_accuracy}')
+
+            self.encoder.train()
+            self.decoder.train()
+
+            return avg_loss
+
 
 # def train_test_split(dataset, test_size=0.2, shuffle=True):
 #     indices = list(range(len(dataset)))
 #     if shuffle:
 #         np.random.shuffle(indices)
-    
+
 #     split_idx = int(len(dataset) * (1 - test_size))
-    
+
 #     train_indices, test_indices = indices[:split_idx], indices[split_idx:]
-    
+
 #     train_subset = Subset(dataset, train_indices)
 #     test_subset = Subset(dataset, test_indices)
-    
+
 #     return train_subset, test_subset
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = "cpu"
-print("Using device:", device)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda or cpu)")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
+    parser.add_argument("--test_size", type=float, default=0.1, help="Test size")
+    parser.add_argument("--sentence_transformer", type=str, default="all-mpnet-base-v2", help="Sentence Transformer model")
+    parser.add_argument("--embedding_dim", type=int, default=768, help="Embedding dimension")
+    parser.add_argument("--z_dim", type=int, default=64, help="Z dimension")
+    parser.add_argument("--sample_length", type=int, default=100, help="Sample length")
+    parser.add_argument("--use_kl", type=bool, default=True, help="Use KL divergence")
+    parser.add_argument("--kl_weight", type=float, default=10, help="KL weight")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to train for")
+    args = parser.parse_args()
 
-BATCH_SIZE = 256
-TEST_SIZE = 0.1
-# TODO: Try OpenAI's Ada Embedding (remember to cache)
-SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
-EMBEDDING_DIM = 768
-Z_DIM = 64
-SAMPLE_LENGTH = 100
-USE_KL = True
-# TODO: Try different KL Weight
-KL_WEIGHT = 10
-print("Start Initializing Dataset...")
-model_order, train_x, test_x, train_y, test_y = generate_train_test_split(sentence_transformer=SENTENCE_TRANSFORMER,
-                                                                          test_size=TEST_SIZE, read=True)
-train_dataset = CustomDataset(train_x, train_y)
-test_dataset = CustomDataset(test_x, test_y)
-print("Finish Initializing Dataset")
-# print(dataset.data.shape, dataset.labels.shape)
-# x,y = dataset.__getitem__(0)
-# print(x.shape, y.shape)
+    device = args.device
+    batch_size = args.batch_size
+    test_size = args.test_size
+    sentence_transformer = args.sentence_transformer
+    embedding_dim = args.embedding_dim
+    z_dim = args.z_dim
+    sample_length = args.sample_length
+    use_kl = args.use_kl
+    kl_weight = args.kl_weight
+    epochs = args.epochs
 
-# train_subset, test_subset = train_test_split(dataset, test_size=0.2)
-train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM)
-decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
-trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, test_dataloader, 
-                  use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device)
+    # TODO: Try OpenAI's Ada Embedding (remember to cache)
 
-trainer.train(epochs=10)
+    model_order, train_x, test_x, train_y, test_y = generate_train_test_split(
+        sentence_transformer=sentence_transformer, test_size=test_size, read=True
+    )
+    train_dataset = CustomDataset(train_x, train_y)
+    test_dataset = CustomDataset(test_x, test_y)
+    print("Finish Initializing Dataset")
+    # print(dataset.data.shape, dataset.labels.shape)
+    # x,y = dataset.__getitem__(0)
+    # print(x.shape, y.shape)
+
+    # train_subset, test_subset = train_test_split(dataset, test_size=0.2)
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
+    test_dataloader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False)
+    encoder = Encoder(c_dim=embedding_dim + 1, z_dim=z_dim).to(device)
+    decoder = Decoder(q_dim=embedding_dim, z_dim=z_dim).to(device)
+    trainer = Trainer(encoder, decoder, sample_length, train_dataloader, test_dataloader, use_kl=use_kl, kl_weight=kl_weight, device=device)
+
+    trainer.train(epochs=epochs)

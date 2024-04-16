@@ -13,6 +13,7 @@ from tqdm import tqdm
 import wandb
 import json
 import random
+import argparse
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -20,7 +21,7 @@ random.seed(42)
 
 pwd = os.getcwd()
 
-data = pd.read_csv(f"{pwd}/data/mmlu_correctness_1k.csv")
+# data = pd.read_csv(f"{pwd}/data/mmlu_correctness_1k.csv")
 # print(MODEL_NAMES[0:10])
 
 
@@ -31,21 +32,13 @@ def split_and_load(batch_size=256, subset_size=None, base_model_only=False):
     # print(test_data.head())
 
     if base_model_only:
-        train_data = train_data[
-            ~train_data["model_name"].str.contains("vote|moe")
-        ].reset_index(drop=True)
-        test_data = test_data[
-            ~test_data["model_name"].str.contains("vote|moe")
-        ].reset_index(drop=True)
+        train_data = train_data[~train_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
+        test_data = test_data[~test_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
     elif subset_size:
         model_subset = random.sample(list(test_data["model_name"]), subset_size)
         # print(model_subset[:10])
-        train_data = train_data[
-            train_data["model_name"].isin(model_subset)
-        ].reset_index(drop=True)
-        test_data = test_data[test_data["model_name"].isin(model_subset)].reset_index(
-            drop=True
-        )
+        train_data = train_data[train_data["model_name"].isin(model_subset)].reset_index(drop=True)
+        test_data = test_data[test_data["model_name"].isin(model_subset)].reset_index(drop=True)
         # print(train_data.head())
         # print(test_data.head())
 
@@ -64,9 +57,7 @@ def split_and_load(batch_size=256, subset_size=None, base_model_only=False):
             self.num_models = len(data["model_id"].unique())
             self.num_prompts = len(data["prompt_id"].unique())
             self.num_classes = len(data["label"].unique())
-            print(
-                f"number of models: {self.num_models}, number of prompts: {self.num_prompts}"
-            )
+            print(f"number of models: {self.num_models}, number of prompts: {self.num_prompts}")
 
         def get_num_models(self):
             return self.num_models
@@ -210,9 +201,7 @@ def plot_evolving_embeddings(embeddings, stride=10):
         from sklearn.decomposition import PCA
 
         pca = PCA(n_components=2)
-        embeddings = pca.fit_transform(embeddings.reshape(-1, dim)).reshape(
-            num_points, num_models, 2
-        )
+        embeddings = pca.fit_transform(embeddings.reshape(-1, dim)).reshape(num_points, num_models, 2)
 
     plt.figure()
 
@@ -222,14 +211,10 @@ def plot_evolving_embeddings(embeddings, stride=10):
         marker = markers[i % len(markers)]
 
         # Define brightness for each point within the model
-        brightness = np.linspace(
-            0.0, 0.25, num_points
-        )  # Adjust brightness from 0.5 to 1
+        brightness = np.linspace(0.0, 0.25, num_points)  # Adjust brightness from 0.5 to 1
 
         for j in range(num_points - 1):
-            line_color = color[:3] + (
-                brightness[j],
-            )  # Set brightness component of the color
+            line_color = color[:3] + (brightness[j],)  # Set brightness component of the color
             plt.plot(
                 embeddings[j : j + 2, i, 0],
                 embeddings[j : j + 2, i, 1],
@@ -325,9 +310,7 @@ def train_recsys_rating(
 
         wandb.log(info)
 
-        progress_bar.set_postfix(
-            train_loss=train_loss, test_loss=test_ls, test_acc=test_acc
-        )
+        progress_bar.set_postfix(train_loss=train_loss, test_loss=test_ls, test_acc=test_acc)
         progress_bar.update(1)
 
     progress_bar.close()
@@ -338,52 +321,65 @@ def train_recsys_rating(
     plot_evolving_embeddings(embeddings, stride=max(num_epochs // 50, 1))
 
 
-BATCH_SIZE = 512
-NUM_EPOCHS = 25
-SUBSET_SIZE = None  # Set to None if want all models
-BASE_MODEL_ONLY = True
-(
-    num_models,
-    num_prompts,
-    num_classes,
-    num_categories,
-    train_loader,
-    test_loader,
-    MODEL_NAMES,
-) = split_and_load(
-    batch_size=BATCH_SIZE, subset_size=SUBSET_SIZE, base_model_only=BASE_MODEL_ONLY
-)
-mf = TextMF(
-    dim=20,
-    num_models=num_models,
-    num_prompts=num_prompts,
-    num_classes=num_classes,
-    alpha=0.05
-).to("cuda")
-train_recsys_rating(
-    mf,
-    train_loader,
-    test_loader,
-    num_models,
-    num_prompts,
-    BATCH_SIZE,
-    NUM_EPOCHS,
-    devices=["cuda"],
-)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--embedding_dim", type=int, default=20)
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--num_epochs", type=int, default=25)
+    parser.add_argument("--subset_size", type=int, default=None)
+    parser.add_argument("--base_model_only", type=bool, default=True)
+    parser.add_argument("--alpha", type=float, default=0.05, help="noise level")
+    args = parser.parse_args()
 
-# fm = FM(
-#     dim=32,
-#     num_models=num_models,
-#     num_prompts=num_prompts,
-#     num_categories=num_categories,
-# ).to("cuda")
-# train_recsys_rating(
-#     fm,
-#     train_loader,
-#     test_loader,
-#     num_models,
-#     num_prompts,
-#     BATCH_SIZE,
-#     NUM_EPOCHS,
-#     devices=["cuda"],
-# )
+    embedding_dim = args.embedding_dim
+    batch_size = args.batch_size
+    num_epochs = args.num_epochs
+    subset_size = args.subset_size
+    base_model_only = args.base_model_only
+    alpha = args.alpha
+
+    (
+        num_models,
+        num_prompts,
+        num_classes,
+        num_categories,
+        train_loader,
+        test_loader,
+        MODEL_NAMES,
+    ) = split_and_load(batch_size=batch_size, subset_size=subset_size, base_model_only=base_model_only)
+
+    mf = TextMF(
+        dim=embedding_dim,
+        num_models=num_models,
+        num_prompts=num_prompts,
+        num_classes=num_classes,
+        alpha=alpha,
+    ).to("cuda")
+
+    train_recsys_rating(
+        mf,
+        train_loader,
+        test_loader,
+        num_models,
+        num_prompts,
+        batch_size,
+        num_epochs,
+        devices=["cuda"],
+    )
+
+    # fm = FM(
+    #     dim=32,
+    #     num_models=num_models,
+    #     num_prompts=num_prompts,
+    #     num_categories=num_categories,
+    # ).to("cuda")
+    # train_recsys_rating(
+    #     fm,
+    #     train_loader,
+    #     test_loader,
+    #     num_models,
+    #     num_prompts,
+    #     BATCH_SIZE,
+    #     NUM_EPOCHS,
+    #     devices=["cuda"],
+    # )
