@@ -89,12 +89,12 @@ class Decoder(nn.Module):  # Get input from encoder which is z and a new questio
 
 def generate_train_test_split(sentence_transformer, test_size=0.2, store=False, read=False):
     if read:
-        with open("../data/model_order_pc.pkl", "rb") as file:
+        with open("./data/model_order_pc.pkl", "rb") as file:
             model_order = pickle.load(file)
-        train_x = torch.load("../data/train_x_pc.pth")
-        train_y = torch.load("../data/train_y_pc.pth")
-        test_x = torch.load("../data/test_x_pc.pth")
-        test_y = torch.load("../data/test_y_pc.pth")
+        train_x = torch.load("./data/train_x_pc.pth")
+        train_y = torch.load("./data/train_y_pc.pth")
+        test_x = torch.load("./data/test_x_pc.pth")
+        test_y = torch.load("./data/test_y_pc.pth")
         return model_order, train_x, test_x, train_y, test_y
 
     data = load_dataset("RZ412/mmlu_responses_1k_augmented")
@@ -123,12 +123,12 @@ def generate_train_test_split(sentence_transformer, test_size=0.2, store=False, 
     train_y, test_y = y_shuffled[:, :split_idx], y_shuffled[:, split_idx:]
 
     if store:
-        with open(f"../data/model_order_pc.pkl", "wb") as file:
+        with open(f"./data/model_order_pc.pkl", "wb") as file:
             pickle.dump(model_order, file)
-        torch.save(train_x, f"../data/train_x_pc.pth")
-        torch.save(train_y, f"../data/train_y_pc.pth")
-        torch.save(test_x, f"../data/test_x_pc.pth")
-        torch.save(test_y, f"../data/test_y_pc.pth")
+        torch.save(train_x, f"./data/train_x_pc.pth")
+        torch.save(train_y, f"./data/train_y_pc.pth")
+        torch.save(test_x, f"./data/test_x_pc.pth")
+        torch.save(test_y, f"./data/test_y_pc.pth")
 
     return model_order, train_x, test_x, train_y, test_y
 
@@ -318,16 +318,16 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 num_batches += 1
 
             total_accuracy += one_batch_accuracies.mean()
-        # # Autoregressively compute accuracy
-        # total_loss = 0
-        # total_accuracy = 0
-        # num_batches = 0
-        # with torch.no_grad():
-        #     for batch in dataloader:
-        #         p_embeds, labels = batch
-        #         p_embeds = p_embeds.to(self.device)
-        #         labels = labels.to(self.device)
-        #         batch_size, num_total_question, q_dim = p_embeds.shape
+            # # Autoregressively compute accuracy
+            # total_loss = 0
+            # total_accuracy = 0
+            # num_batches = 0
+            # with torch.no_grad():
+            #     for batch in dataloader:
+            #         p_embeds, labels = batch
+            #         p_embeds = p_embeds.to(self.device)
+            #         labels = labels.to(self.device)
+            #         batch_size, num_total_question, q_dim = p_embeds.shape
 
             #         subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length))
             #         p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
@@ -435,9 +435,10 @@ if __name__ == "__main__":
     parser.add_argument("--embedding_dim", type=int, default=768, help="Embedding dimension")
     parser.add_argument("--z_dim", type=int, default=64, help="Z dimension")
     parser.add_argument("--sample_length", type=int, default=100, help="Sample length")
-    parser.add_argument("--use_kl", type=bool, default=True, help="Use KL divergence")
+    parser.add_argument("--use_kl", action='store_true', help="Use KL divergence")
     parser.add_argument("--kl_weight", type=float, default=10, help="KL weight")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs to train for")
+    parser.add_argument("--read_cache", action='store_true', help="Read from cache")
     args = parser.parse_args()
 
     device = args.device
@@ -450,11 +451,16 @@ if __name__ == "__main__":
     use_kl = args.use_kl
     kl_weight = args.kl_weight
     epochs = args.epochs
+    read_cache = args.read_cache
 
     # TODO: Try OpenAI's Ada Embedding (remember to cache)
+    if not read_cache:
+        store = True
+    else:
+        store = False
 
     model_order, train_x, test_x, train_y, test_y = generate_train_test_split(
-        sentence_transformer=sentence_transformer, test_size=test_size, read=True
+        sentence_transformer=sentence_transformer, test_size=test_size, store=store, read=read_cache
     )
     train_dataset = CustomDataset(train_x, train_y)
     test_dataset = CustomDataset(test_x, test_y)

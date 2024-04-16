@@ -327,7 +327,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--num_epochs", type=int, default=25)
     parser.add_argument("--subset_size", type=int, default=None)
-    parser.add_argument("--base_model_only", type=bool, default=True)
+    parser.add_argument("--base_model_only", action="store_true")
     parser.add_argument("--alpha", type=float, default=0.05, help="noise level")
     args = parser.parse_args()
 
