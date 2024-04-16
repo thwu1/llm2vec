@@ -292,6 +292,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
             p_embeds = p_embeds.to(self.device)
             labels = labels.to(self.device)
 
+            one_batch_accuracies = []
             for i in range(0, num_total_question, self.sample_length):
                 p_embeds_sample = p_embeds[:, i:i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
                 labels_sample = labels[:, i:i + self.sample_length]     # Shape: [batch_size, sample_size]
@@ -320,9 +321,11 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 predicted_labels = (probabilities > 0.5).float()
                 correct_predictions = (predicted_labels == labels_sample[:, 1:].float()).float()
                 accuracy = correct_predictions.mean()
+                one_batch_accuracies.append(accuracy)
 
                 num_batches += 1
 
+            total_accuracy += one_batch_accuracies.mean()
         # # Autoregressively compute accuracy
         # total_loss = 0
         # total_accuracy = 0
@@ -357,10 +360,10 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         #         total_loss += loss.item()
         #         num_batches += 1
 
-            avg_loss = total_loss / num_batches if num_batches > 0 else 0
-            avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
-            # print(f'Test Loss: {avg_loss}')
-            print(f'Test Accuracy: {avg_accuracy}')
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0
+        avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
+        # print(f'Test Loss: {avg_loss}')
+        print(f'Test Accuracy: {avg_accuracy}')
 
         # Max sample and compute accuracy of all questions left
         # total_loss = 0
@@ -411,10 +414,10 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         #     # print(f'Test Loss: {avg_loss}')
         #     print(f'Test Accuracy: {avg_accuracy}')
 
-            self.encoder.train()
-            self.decoder.train()
+        self.encoder.train()
+        self.decoder.train()
             
-            return avg_loss
+        return avg_loss
 
 # def train_test_split(dataset, test_size=0.2, shuffle=True):
 #     indices = list(range(len(dataset)))
