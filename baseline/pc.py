@@ -433,8 +433,8 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
     
 #     return train_subset, test_subset
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# device = "cpu"
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 print("Using device:", device)
 
 BATCH_SIZE = 256
