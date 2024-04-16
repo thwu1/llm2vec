@@ -114,7 +114,7 @@ def split_and_load(batch_size=256, subset_size=None, base_model_only=False):
 
 
 class TextMF(torch.nn.Module):
-    def __init__(self, dim, num_models, num_prompts, text_dim=768, num_classes=2):
+    def __init__(self, dim, num_models, num_prompts, text_dim=768, num_classes=2, alpha=0.05):
         super().__init__()
         self._name = "TextMF"
         self.P = torch.nn.Embedding(num_models, dim)
@@ -122,15 +122,16 @@ class TextMF(torch.nn.Module):
         embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
         self.Q.weight.data.copy_(torch.tensor(embeddings))
         self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, dim))
+        self.alpha = alpha
 
         # self.classifier = nn.Sequential(nn.Linear(dim, 2 * dim), nn.ReLU(), nn.Linear(2 * dim, num_classes))
         self.classifier = nn.Sequential(nn.Linear(dim, num_classes))
 
-    def forward(self, model, prompt, category, alpha=0.1, test_mode=False):
+    def forward(self, model, prompt, category, test_mode=False):
         p = self.P(model)
         q = self.Q(prompt)
         if not test_mode:
-            q += torch.randn_like(q) * alpha
+            q += torch.randn_like(q) * self.alpha
         q = self.text_proj(q)
 
         return self.classifier(p * q)
@@ -338,9 +339,9 @@ def train_recsys_rating(
 
 
 BATCH_SIZE = 512
-NUM_EPOCHS = 10
+NUM_EPOCHS = 25
 SUBSET_SIZE = None  # Set to None if want all models
-BASE_MODEL_ONLY = False
+BASE_MODEL_ONLY = True
 (
     num_models,
     num_prompts,
@@ -357,6 +358,7 @@ mf = TextMF(
     num_models=num_models,
     num_prompts=num_prompts,
     num_classes=num_classes,
+    alpha=0.05
 ).to("cuda")
 train_recsys_rating(
     mf,

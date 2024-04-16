@@ -46,9 +46,11 @@ def evaluate(train_ls, test_ls):
         bool_ls = list(map(lambda x, y: int(x == y), pred_y, y_test))
         accu.append(sum(bool_ls) / len(y_test))
         model_names.append(train_ls[i]["model_name"].iloc[0])
+        if i % 100 == 0:
+            print(f"Mean Accuracy for {i} models:", sum(accu) / len(accu))
 
-    for acc, model in zip(accu, model_names):
-        print(f"Model: {model}, Accuracy: {acc}")
+    # for acc, model in zip(accu, model_names):
+    #     print(f"Model: {model}, Accuracy: {acc}")
     print("Mean Accuracy:", sum(accu) / len(accu))
 
 
