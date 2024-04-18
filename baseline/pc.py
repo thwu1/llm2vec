@@ -11,6 +11,60 @@ import pandas as pd
 import random
 import os
 
+def load_data(base_model_only):
+    pwd = os.getcwd()
+
+    if base_model_only:
+        with open(f'{pwd}/data/model_order_base_only.pkl', 'rb') as file:
+            model_order = pickle.load(file)
+        with open(f'{pwd}/data/train_prompt_base_only.pkl', 'rb') as file:
+            train_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/val_prompt_base_only.pkl', 'rb') as file:
+            val_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/test_prompt_base_only.pkl', 'rb') as file:
+            test_prompt_order = pickle.load(file)
+        train_x = torch.load(f'{pwd}/data/train_x_base_only.pth')
+        train_y = torch.load(f'{pwd}/data/train_y_base_only.pth')
+        val_x = torch.load(f'{pwd}/data/val_x_base_only.pth')
+        val_y = torch.load(f'{pwd}/data/val_y_base_only.pth')
+        test_x = torch.load(f'{pwd}/data/test_x_base_only.pth')
+        test_y = torch.load(f'{pwd}/data/test_y_base_only.pth')
+    else:
+        with open(f'{pwd}/data/model_order_full.pkl', 'rb') as file:
+            model_order = pickle.load(file)
+        with open(f'{pwd}/data/train_prompt_full.pkl', 'rb') as file:
+            train_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/val_prompt_full.pkl', 'rb') as file:
+            val_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/test_prompt_full.pkl', 'rb') as file:
+            test_prompt_order = pickle.load(file)
+        train_x = torch.load(f'{pwd}/data/train_x_full.pth')
+        train_y = torch.load(f'{pwd}/data/train_y_full.pth')
+        val_x = torch.load(f'{pwd}/data/val_x_full.pth')
+        val_y = torch.load(f'{pwd}/data/val_y_full.pth')
+        test_x = torch.load(f'{pwd}/data/test_x_full.pth')
+        test_y = torch.load(f'{pwd}/data/test_y_full.pth')
+
+    # print(model_order, train_prompt_order, val_prompt_order, test_prompt_order)
+    print(train_x.shape, train_y.shape, val_x.shape, val_y.shape, test_x.shape, test_y.shape)
+    return model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y
+
+
+class CustomDataset(Dataset):
+    # x: (batch_size, num_total_questions, question_embedding_dim)
+    # y: (batch_size, num_total_questions)
+    def __init__(self,x,y):
+        self.data = x
+        self.labels = y
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        x = self.data[idx]  # Shape (num_models, question_embedding_dim)
+        y = self.labels[idx]  # Shape (num_models)
+        
+        return x, y
 
 class MLP(nn.Module):
     def __init__(self, input_size, hidden_sizes, output_size, 
@@ -92,164 +146,13 @@ class Decoder(nn.Module):  # Get input from encoder which is z and a new questio
             (zs, qs), dim=-1
         )
         return self.network(x)
-
-def generate_train_test_split(sentence_transformer, test_size=0.2, store=False, read=False):
-    if read:
-        with open('../data/model_order_pc.pkl', 'rb') as file:
-            model_order = pickle.load(file)
-        train_x = torch.load('../data/train_x_pc.pth')
-        train_y = torch.load('../data/train_y_pc.pth')
-        test_x = torch.load('../data/test_x_pc.pth')
-        test_y = torch.load('../data/test_y_pc.pth')
-        return model_order, train_x, test_x, train_y, test_y
-    
-    data = load_dataset("RZ412/mmlu_responses_1k_augmented")
-    num_models = len(data['train'][0]['answers'])
-
-    all_questions = data['train']['test_questions']
-    model = SentenceTransformer(sentence_transformer)
-    question_vectors = model.encode(all_questions, show_progress_bar=True)
-    x = torch.tensor(question_vectors)
-    x = x.unsqueeze(0).repeat(num_models, 1, 1)
-
-    y = []
-    for row in data['train']:
-        model_order = [element['model'] for element in row['answers']]
-        option_map = {0: 'A', 1: 'B', 2: 'C', 3: 'D'}
-        ref_answer = option_map[row['reference_answers']]
-        correctness_result = [int(element['answer'] == ref_answer) for element in row['answers']]
-        y.append(correctness_result)
-    y = torch.tensor(y).transpose(0,1)
-
-    num_models, num_total_question, q_dim = x.shape
-    indices = torch.randperm(num_models)
-    x_shuffled, y_shuffled = x[indices], y[indices]
-    split_idx = int(num_total_question * (1 - test_size))
-    train_x, test_x = x_shuffled[:,:split_idx,:], x_shuffled[:,split_idx:,:]
-    train_y, test_y = y_shuffled[:,:split_idx], y_shuffled[:,split_idx:]
-
-    if store:
-        with open(f'../data/model_order_pc.pkl', 'wb') as file:
-            pickle.dump(model_order, file)
-        torch.save(train_x, f'../data/train_x_pc.pth')
-        torch.save(train_y, f'../data/train_y_pc.pth')
-        torch.save(test_x, f'../data/test_x_pc.pth')
-        torch.save(test_y, f'../data/test_y_pc.pth')
-        
-    return model_order, train_x, test_x, train_y, test_y
-
-def load_train_test_split(base_model_only, sentence_transformer, read=False):
-    pwd = os.getcwd()
-
-    if read:
-        if base_model_only:
-            with open(f'{pwd}/data/model_order_pc_base_only.pkl', 'rb') as file:
-                model_order = pickle.load(file)
-            with open(f'{pwd}/data/train_prompt_pc_base_only.pkl', 'rb') as file:
-                train_prompt_order = pickle.load(file)
-            with open(f'{pwd}/data/test_prompt_pc_base_only.pkl', 'rb') as file:
-                test_prompt_order = pickle.load(file)
-            train_x = torch.load(f'{pwd}/data/train_x_pc_base_only.pth')
-            train_y = torch.load(f'{pwd}/data/train_y_pc_base_only.pth')
-            test_x = torch.load(f'{pwd}/data/test_x_pc_base_only.pth')
-            test_y = torch.load(f'{pwd}/data/test_y_pc_base_only.pth')
-        else:
-            with open(f'{pwd}/data/model_order_pc.pkl', 'rb') as file:
-                model_order = pickle.load(file)
-            with open(f'{pwd}/data/train_prompt_pc.pkl', 'rb') as file:
-                train_prompt_order = pickle.load(file)
-            with open(f'{pwd}/data/test_prompt_pc.pkl', 'rb') as file:
-                test_prompt_order = pickle.load(file)
-            train_x = torch.load(f'{pwd}/data/train_x_pc.pth')
-            train_y = torch.load(f'{pwd}/data/train_y_pc.pth')
-            test_x = torch.load(f'{pwd}/data/test_x_pc.pth')
-            test_y = torch.load(f'{pwd}/data/test_y_pc.pth')
-
-        return model_order, train_prompt_order, test_prompt_order, train_x, test_x, train_y, test_y
-
-    train_data = pd.read_csv(f"{pwd}/data/mmlu_train.csv")
-    test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
-
-    if base_model_only:
-        train_data = train_data[
-            ~train_data["model_name"].str.contains("vote|moe")
-        ].reset_index(drop=True)
-        test_data = test_data[
-            ~test_data["model_name"].str.contains("vote|moe")
-        ].reset_index(drop=True)
-
-    train_data = train_data.sort_values(["model_id","prompt_id"])
-    test_data = test_data.sort_values(["model_id","prompt_id"])
-
-    model_order = list(test_data['model_name'].unique())
-    train_prompt_order = list(train_data[train_data['model_name']==model_order[0]]['prompt'])
-    test_prompt_order = list(test_data[test_data['model_name']==model_order[0]]['prompt'])
-
-    model = SentenceTransformer(sentence_transformer)
-
-    train_question_vectors = model.encode(train_prompt_order, show_progress_bar=True)
-    train_x = torch.tensor(train_question_vectors)
-    train_x = train_x.unsqueeze(0).repeat(len(model_order), 1, 1)
-    train_y = torch.tensor(list(train_data['label']))
-    train_y = train_y.reshape(len(model_order),len(train_prompt_order))
-
-    test_question_vectors = model.encode(test_prompt_order, show_progress_bar=True)
-    test_x = torch.tensor(test_question_vectors)
-    test_x = test_x.unsqueeze(0).repeat(len(model_order), 1, 1)
-    test_y = torch.tensor(list(test_data['label']))
-    test_y = test_y.reshape(len(model_order),len(test_prompt_order))
-
-    # Storing
-    if base_model_only:
-        with open(f'{pwd}/data/model_order_pc_base_only.pkl', 'wb') as file:
-            pickle.dump(model_order, file)
-        with open(f'{pwd}/data/train_prompt_pc_base_only.pkl', 'wb') as file:
-            pickle.dump(train_prompt_order, file)
-        with open(f'{pwd}/data/test_prompt_pc_base_only.pkl', 'wb') as file:
-            pickle.dump(test_prompt_order, file)
-        torch.save(train_x, f'{pwd}/data/train_x_pc_base_only.pth')
-        torch.save(train_y, f'{pwd}/data/train_y_pc_base_only.pth')
-        torch.save(test_x, f'{pwd}/data/test_x_pc_base_only.pth')
-        torch.save(test_y, f'{pwd}/data/test_y_pc_base_only.pth')
-    else:
-        with open(f'{pwd}/data/model_order_pc.pkl', 'wb') as file:
-            pickle.dump(model_order, file)
-        with open(f'{pwd}/data/train_prompt_pc.pkl', 'wb') as file:
-            pickle.dump(train_prompt_order, file)
-        with open(f'{pwd}/data/test_prompt_pc.pkl', 'wb') as file:
-            pickle.dump(test_prompt_order, file)
-        torch.save(train_x, f'{pwd}/data/train_x_pc.pth')
-        torch.save(train_y, f'{pwd}/data/train_y_pc.pth')
-        torch.save(test_x, f'{pwd}/data/test_x_pc.pth')
-        torch.save(test_y, f'{pwd}/data/test_y_pc.pth')
-
-    return model_order, train_prompt_order, test_prompt_order, train_x, test_x, train_y, test_y
-
-
-class CustomDataset(Dataset):
-    # want "for batch in dataloader, and batch = (x,y)"
-    # batch_size = num_model
-    # x: (batch_size, num_total_questions, question_embedding_dim)
-    # y: (batch_size, num_total_questions)
-    def __init__(self,x,y):
-        self.data = x
-        self.labels = y
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        x = self.data[idx]  # Shape (num_models, question_embedding_dim)
-        y = self.labels[idx]  # Shape (num_models)
-        
-        return x, y
-
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
-    def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, 
+    def __init__(self, encoder, decoder, sample_length, train_dataloader, val_dataloader=None, test_dataloader=None, 
                  use_kl=True, kl_weight=1, device='cpu'):
         self.encoder = encoder.to(device)
         self.decoder = decoder.to(device)
         self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
         self.test_dataloader = test_dataloader
         self.optimizer = torch.optim.Adam(
             list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3
@@ -261,12 +164,16 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         self.device = device
 
     def train(self, epochs=10):
+        test_accuracies = []
         for epoch in range(epochs):
             print(f"Epoch {epoch+1}: ")
             self.train_epoch(self.train_dataloader)
 
-            if self.test_dataloader:
-                eval_results = self.evaluate(self.test_dataloader)
+            # if self.test_dataloader and self.val_dataloader:
+            avg_loss, avg_accuracy = self.evaluate(self.val_dataloader, self.test_dataloader)
+            test_accuracies.append(avg_accuracy)
+        
+        print(f"Max Test Accuracy: {max(test_accuracies)}")
 
     def kl_loss(self, z_means, z_vars):
         z_means = z_means.to(self.device)
@@ -281,12 +188,10 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
         return kl_div_sum * self.kl_weight
 
-    def train_epoch(self, dataloader):
+    def train_epoch(self, train_dataloader, train_on_subset=False):
         total_loss = 0
-        total_accuracy = 0
-        num_batches = 0
         gen_indices = True
-        for batch in tqdm(dataloader):
+        for batch in tqdm(train_dataloader):
             # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
             p_embeds, labels = batch
             p_embeds = p_embeds.to(self.device)
@@ -297,21 +202,12 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 indices = torch.randperm(num_total_question)
             p_embeds = p_embeds[:, indices, :]
             labels = labels[:, indices]
-            p_embeds = p_embeds
-            labels = labels
 
             for i in range(0, num_total_question, self.sample_length):
                 p_embeds_sample = p_embeds[:, i:i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
                 labels_sample = labels[:, i:i + self.sample_length]     # Shape: [batch_size, sample_size]
                 # print(p_embeds_sample.shape, labels_sample.shape)
-
                 # TODO: Add an option of random sampling of subset size (Exponential Distribution, clamp at 30-900)
-
-                # subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length)).to(self.device)
-                # Shape: [batch_size, subset_length, prompt_embed_dim]
-                # p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
-                # # Shape: [batch_size, subset_length]
-                # labels = torch.gather(labels, 1, subset_indices)
 
                 cs = torch.cat((p_embeds_sample, labels_sample.unsqueeze(-1)), dim=-1).to(self.device)
 
@@ -333,11 +229,12 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                num_batches += 1
                 # print(f'Loss: {loss}')
+                if train_on_subset:
+                    break
 
         # print(f'Training Loss: {loss}')
-        print(f'Training Accuracy: {accuracy}')
+        print(f'Training Accuracy (Autoregressive): {accuracy}')
 
     def evaluate(self, val_dataloader, test_dataloader):
         # TODO: Add one more accuracy evaluation method (max sample and evaluate all questions left)
@@ -345,183 +242,74 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         self.decoder.eval()
 
         total_loss = 0
-        total_accuracies = []
-        num_batches = 0
-        gen_indices = True
-        for batch in dataloader:
-            # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
-            p_embeds, labels = batch
-            p_embeds = p_embeds.to(self.device)
-            labels = labels.to(self.device)
-            batch_size, num_total_question, q_dim = p_embeds.shape
-            if gen_indices:
-                gen_indices = False
-                indices = torch.randperm(num_total_question)
-            p_embeds = p_embeds[:, indices, :]
-            labels = labels[:, indices]
-            p_embeds = p_embeds
-            labels = labels
+        
+        # Generate Z on Validation Set
+        p_embeds_val, labels_val = next(iter(val_dataloader))
+        p_embeds_val = p_embeds_val.to(self.device)
+        labels_val = labels_val.to(self.device)
+        cs = torch.cat((p_embeds_val, labels_val.unsqueeze(-1)), dim=-1).to(self.device)
+        zs, logprobs, z_means, z_vars = self.encoder(cs)
 
-            one_batch_accuracies = []
-            for i in range(0, num_total_question, self.sample_length):
-                p_embeds_sample = p_embeds[:, i:i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
-                labels_sample = labels[:, i:i + self.sample_length]     # Shape: [batch_size, sample_size]
+        # TODO: Evaluate on Whole test dataset
+        p_embeds_test, labels_test = next(iter(test_dataloader))
+        p_embeds_test = p_embeds_test.to(self.device)
+        labels_test = labels_test.to(self.device)
 
-                # TODO: Add an option of random sampling of subset size (Exponential Distribution, clamp at 30-900)
+        # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
+        batch_size, num_test_question, q_dim = p_embeds_test.shape
+        
+        posteriors = torch.exp(logprobs)
+        preds = self.decoder(zs[:, -1, :].unsqueeze(1).repeat(1, num_test_question, 1), p_embeds_test).squeeze(-1)
+        loss = self.loss_fn(preds, labels_test.float())
+        loss = (loss * posteriors[:, :-1]).mean()
+        if self.use_kl:
+            loss += self.kl_loss(z_means, z_vars)
+        total_loss += loss.item()
+        
+        # Calculate accuracy
+        probabilities = torch.sigmoid(preds)
+        predicted_labels = (probabilities > 0.5).float()
+        correct_predictions = (predicted_labels == labels_test.float()).float()
+        test_accuracy = correct_predictions.mean()
 
-                # subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length)).to(self.device)
-                # Shape: [batch_size, subset_length, prompt_embed_dim]
-                # p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
-                # # Shape: [batch_size, subset_length]
-                # labels = torch.gather(labels, 1, subset_indices)
-
-                cs = torch.cat((p_embeds_sample, labels_sample.unsqueeze(-1)), dim=-1).to(self.device)
-
-                zs, logprobs, z_means, z_vars = self.encoder(cs)
-                posteriors = torch.exp(logprobs)
-                preds = self.decoder(zs[:, :-1], p_embeds_sample[:, 1:]).squeeze(-1)
-                loss = self.loss_fn(preds, labels_sample[:, 1:].float())
-                loss = (loss * posteriors[:, :-1]).mean()
-                if self.use_kl:
-                    loss += self.kl_loss(z_means, z_vars)
-                total_loss += loss.item()
-
-                # Calculate accuracy
-                probabilities = torch.sigmoid(preds)
-                predicted_labels = (probabilities > 0.5).float()
-                correct_predictions = (predicted_labels == labels_sample[:, 1:].float()).float()
-                accuracy = correct_predictions.mean()
-                one_batch_accuracies.append(accuracy)
-
-            total_accuracies.append(np.mean(one_batch_accuracies))
-        # # Autoregressively compute accuracy
-        # total_loss = 0
-        # total_accuracy = 0
-        # num_batches = 0
-        # with torch.no_grad():
-        #     for batch in dataloader:
-        #         p_embeds, labels = batch
-        #         p_embeds = p_embeds.to(self.device)
-        #         labels = labels.to(self.device)
-        #         batch_size, num_total_question, q_dim = p_embeds.shape
-
-        #         subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length))
-        #         p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
-        #         labels = torch.gather(labels, 1, subset_indices)
-
-        #         cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
-        #         zs, logprobs, z_means, z_vars = self.encoder(cs)
-
-        #         preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
-        #         loss = self.loss_fn(preds, labels[:, 1:].float())
-        #         loss = (loss * torch.exp(logprobs[:, :-1])).mean()  # Apply posterior as weights
-        #         if self.use_kl:
-        #             loss += self.kl_loss(z_means, z_vars)
-
-        #         # Calculate accuracy
-        #         probabilities = torch.sigmoid(preds)
-        #         predicted_labels = (probabilities > 0.5).float()
-        #         correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
-        #         accuracy = correct_predictions.mean()
-        #         total_accuracy += accuracy
-                    
-        #         total_loss += loss.item()
-        #         num_batches += 1
-
-        avg_loss = total_loss / num_batches if num_batches > 0 else 0
-        avg_accuracy = np.mean(total_accuracies)
+        # avg_loss = total_loss
+        # avg_accuracy = accuracy
         # print(f'Test Loss: {avg_loss}')
-        print(f'Test Accuracy: {avg_accuracy}')
-
-        # Max sample and compute accuracy of all questions left
-        # total_loss = 0
-        # total_accuracy = 0
-        # num_batches = 0
-        # with torch.no_grad():
-        #     for batch in dataloader:
-        #         first_batch_data, first_batch_labels = batch
-        #         batch_size, num_total_question, q_dim = first_batch_data.shape
-
-        #         cs = torch.cat((first_batch_data, first_batch_labels.unsqueeze(-1)), dim=-1)
-        #         zs, logprobs, z_means, z_vars = self.encoder(cs)
-        #         break
-        #     # first_batch = True
-        #     for batch in dataloader:
-        #         # if first_batch:
-        #         #     first_batch = False
-        #         #     continue
-
-        #         p_embeds, labels = batch
-        #         batch_size, num_total_question, q_dim = p_embeds.shape
-
-        #         subset_indices = torch.randint(num_total_question, (batch_size, self.sample_length))
-        #         p_embeds = torch.gather(p_embeds, 1, subset_indices.unsqueeze(-1).expand(-1, -1, q_dim))
-        #         labels = torch.gather(labels, 1, subset_indices)
-
-        #         cs = torch.cat((p_embeds, labels.unsqueeze(-1)), dim=-1)
-        #         zs, logprobs, z_means, z_vars = self.encoder(cs)
-
-        #         preds = self.decoder(zs[:, :-1], p_embeds[:, 1:]).squeeze(-1)
-        #         loss = self.loss_fn(preds, labels[:, 1:].float())
-        #         loss = (loss * torch.exp(logprobs[:, :-1])).mean()  # Apply posterior as weights
-        #         if self.use_kl:
-        #             loss += self.kl_loss(z_means, z_vars)
-
-        #         # Calculate accuracy
-        #         probabilities = torch.sigmoid(preds)
-        #         predicted_labels = (probabilities > 0.5).float()
-        #         correct_predictions = (predicted_labels == labels[:, 1:].float()).float()
-        #         accuracy = correct_predictions.mean()
-        #         total_accuracy += accuracy
-                    
-        #         total_loss += loss.item()
-        #         num_batches += 1
-
-        #     avg_loss = total_loss / num_batches if num_batches > 0 else 0
-        #     avg_accuracy = total_accuracy / num_batches if num_batches > 0 else 0
-        #     # print(f'Test Loss: {avg_loss}')
-        #     print(f'Test Accuracy: {avg_accuracy}')
+        print(f'Test Accuracy (Max Context Length): {test_accuracy}')
 
         self.encoder.train()
         self.decoder.train()
             
-        return avg_loss
+        return total_loss, test_accuracy
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# device = torch.device("cpu")
 print("Using device:", device)
 
 BATCH_SIZE = 512
-TEST_SIZE = 0.1
 # TODO: Try OpenAI's Ada Embedding (remember to cache)
 SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
 EMBEDDING_DIM = 768
 # TODO: Hyperparameter Search
-Z_DIM = 64 # Z_DIM can be 32,64,96,128
+Z_DIM = 32 # Z_DIM can be 32,64,96,128
 SAMPLE_LENGTH = 50 # Sample length can be 50 or 100
+NUM_EPOCHS = 15
 USE_KL = True
-KL_WEIGHT = 10 # Weights can be 1,3,5,10
+KL_WEIGHT = 1 # Weights can be 1,3,5,10
 BASE_MODEL_ONLY = True
 
 print("Start Initializing Dataset...")
-model_order, train_prompt_order, test_prompt_order,\
-    train_x, test_x, train_y, test_y = load_train_test_split(
-        base_model_only=BASE_MODEL_ONLY, sentence_transformer=SENTENCE_TRANSFORMER,
-        read=True)
-# model_order, train_x, test_x, train_y, test_y = generate_train_test_split(sentence_transformer=SENTENCE_TRANSFORMER,
-#                                                                           test_size=TEST_SIZE, read=True)
+model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
+        base_model_only=BASE_MODEL_ONLY)
 train_dataset = CustomDataset(train_x, train_y)
+val_dataset = CustomDataset(val_x, val_y)
 test_dataset = CustomDataset(test_x, test_y)
 print("Finish Initializing Dataset")
-# print(dataset.data.shape, dataset.labels.shape)
-# x,y = dataset.__getitem__(0)
-# print(x.shape, y.shape)
-
 train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=True)
 decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
-trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, test_dataloader, 
+trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, val_dataloader, test_dataloader, 
                   use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device)
 
-trainer.train(epochs=20)
+trainer.train(epochs=NUM_EPOCHS)

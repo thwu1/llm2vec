@@ -187,13 +187,19 @@ def store_train_val_test_split(base_model_only, sentence_transformer="all-mpnet-
     test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
 
     if base_model_only:
-        for data in [train_data, val_data, test_data]:
-            data = data[
-                ~data["model_name"].str.contains("vote|moe")
-            ].reset_index(drop=True)
+        train_data = train_data[
+            ~train_data["model_name"].str.contains("vote|moe")
+        ].reset_index(drop=True)
+        val_data = val_data[
+            ~val_data["model_name"].str.contains("vote|moe")
+        ].reset_index(drop=True)
+        test_data = test_data[
+            ~test_data["model_name"].str.contains("vote|moe")
+        ].reset_index(drop=True)
 
-    for data in [train_data, val_data, test_data]:
-        data = data.sort_values(["model_id","prompt_id"])
+    train_data = train_data.sort_values(["model_id","prompt_id"])
+    val_data = val_data.sort_values(["model_id","prompt_id"])
+    test_data = test_data.sort_values(["model_id","prompt_id"])
 
     model_order = list(test_data['model_name'].unique())
     train_prompt_order = list(train_data[train_data['model_name']==model_order[0]]['prompt'])
@@ -252,6 +258,7 @@ def store_train_val_test_split(base_model_only, sentence_transformer="all-mpnet-
         torch.save(test_x, f'{pwd}/data/test_x_full.pth')
         torch.save(test_y, f'{pwd}/data/test_y_full.pth')
 
+    print(train_x.shape, train_y.shape, val_x.shape, val_y.shape, test_x.shape, test_y.shape)
     return model_order, train_prompt_order, val_prompt_order, test_prompt_order, \
            train_x, train_y, val_x, val_y, test_x, test_y
 
