@@ -7,6 +7,7 @@ from tqdm import tqdm
 import random
 from sentence_transformers import SentenceTransformer
 import numpy as np
+import pickle
 
 # pwd = os.getcwd()
 # print(pwd)
@@ -32,6 +33,44 @@ import numpy as np
 #     ]
 
 #     return train_data_group, test_data_group
+
+def load_data(base_model_only):
+    pwd = os.getcwd()
+
+    if base_model_only:
+        with open(f'{pwd}/data/model_order_base_only.pkl', 'rb') as file:
+            model_order = pickle.load(file)
+        with open(f'{pwd}/data/train_prompt_base_only.pkl', 'rb') as file:
+            train_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/val_prompt_base_only.pkl', 'rb') as file:
+            val_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/test_prompt_base_only.pkl', 'rb') as file:
+            test_prompt_order = pickle.load(file)
+        train_x = torch.load(f'{pwd}/data/train_x_base_only.pth')
+        train_y = torch.load(f'{pwd}/data/train_y_base_only.pth')
+        val_x = torch.load(f'{pwd}/data/val_x_base_only.pth')
+        val_y = torch.load(f'{pwd}/data/val_y_base_only.pth')
+        test_x = torch.load(f'{pwd}/data/test_x_base_only.pth')
+        test_y = torch.load(f'{pwd}/data/test_y_base_only.pth')
+    else:
+        with open(f'{pwd}/data/model_order_full.pkl', 'rb') as file:
+            model_order = pickle.load(file)
+        with open(f'{pwd}/data/train_prompt_full.pkl', 'rb') as file:
+            train_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/val_prompt_full.pkl', 'rb') as file:
+            val_prompt_order = pickle.load(file)
+        with open(f'{pwd}/data/test_prompt_full.pkl', 'rb') as file:
+            test_prompt_order = pickle.load(file)
+        train_x = torch.load(f'{pwd}/data/train_x_full.pth')
+        train_y = torch.load(f'{pwd}/data/train_y_full.pth')
+        val_x = torch.load(f'{pwd}/data/val_x_full.pth')
+        val_y = torch.load(f'{pwd}/data/val_y_full.pth')
+        test_x = torch.load(f'{pwd}/data/test_x_full.pth')
+        test_y = torch.load(f'{pwd}/data/test_y_full.pth')
+
+    # print(model_order, train_prompt_order, val_prompt_order, test_prompt_order)
+    print(train_x.shape, train_y.shape, val_x.shape, val_y.shape, test_x.shape, test_y.shape)
+    return model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y
 
 def load_train_test_split(base_model_only, sentence_transformer):
     pwd = os.getcwd()
@@ -101,10 +140,14 @@ def evaluate(model_order, train_x, test_x, train_y, test_y, num_neighbors):
 BASE_MODEL_ONLY = True
 SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
 NUM_NEIGHBORS = 51
-neighbor_sizes = range(45,60)
+neighbor_sizes = range(90,120)
 
-model_order, train_prompt_order, test_prompt_order,\
-    train_x, test_x, train_y, test_y = load_train_test_split(base_model_only=BASE_MODEL_ONLY, sentence_transformer=SENTENCE_TRANSFORMER)
+print(f"Start Initializing Dataset...")
+model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
+        base_model_only=BASE_MODEL_ONLY)
+# model_order, train_prompt_order, test_prompt_order,\
+#     train_x, test_x, train_y, test_y = load_train_test_split(base_model_only=BASE_MODEL_ONLY, sentence_transformer=SENTENCE_TRANSFORMER)
+print(f"Finish Initializing Dataset")
 
 for num_neighbors in neighbor_sizes:
     evaluate(model_order, train_x, test_x, train_y, test_y, num_neighbors)

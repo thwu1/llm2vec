@@ -5,9 +5,8 @@ import json
 import os
 import pickle
 import torch
-
-# import numpy as np
-# import json
+import numpy as np
+import json
 
 pwd = os.getcwd()
 
@@ -173,12 +172,6 @@ test_df_tuples.sort_values(by="prompt_id").reindex(columns=col_order).to_csv(
     f"{pwd}/data/mmlu_test.csv", index=False
 )
 
-# precompute the embeddings
-model = SentenceTransformer("all-mpnet-base-v2")
-cleaned_prompts = [prompt.replace("Answer:", "").strip("\n") for prompt in prompts]
-embeddings = model.encode(cleaned_prompts)
-json.dump(embeddings.tolist(), open(f"{pwd}/data/embeddings.json", "w"))
-
 def store_train_val_test_split(base_model_only, sentence_transformer="all-mpnet-base-v2"):
     pwd = os.getcwd()
 
@@ -262,5 +255,14 @@ def store_train_val_test_split(base_model_only, sentence_transformer="all-mpnet-
     return model_order, train_prompt_order, val_prompt_order, test_prompt_order, \
            train_x, train_y, val_x, val_y, test_x, test_y
 
-store_train_val_test_split(base_model_only=True)
+model_order, train_prompt_order, val_prompt_order, test_prompt_order, \
+           train_x, train_y, val_x, val_y, test_x, test_y = store_train_val_test_split(base_model_only=True)
 store_train_val_test_split(base_model_only=False)
+
+# precompute the embeddings
+model = SentenceTransformer("all-mpnet-base-v2")
+train_prompt_order.extend(test_prompt_order)
+prompts = train_prompt_order
+cleaned_prompts = [prompt.replace("Answer:", "").strip("\n") for prompt in prompts]
+embeddings = model.encode(cleaned_prompts)
+json.dump(embeddings.tolist(), open(f"{pwd}/data/embeddings.json", "w"))

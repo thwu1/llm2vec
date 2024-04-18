@@ -259,6 +259,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         batch_size, num_test_question, q_dim = p_embeds_test.shape
         
         posteriors = torch.exp(logprobs)
+        # TODO: Check if this implementation is correct
         preds = self.decoder(zs[:, -1, :].unsqueeze(1).repeat(1, num_test_question, 1), p_embeds_test).squeeze(-1)
         loss = self.loss_fn(preds, labels_test.float())
         loss = (loss * posteriors[:, :-1]).mean()
@@ -290,11 +291,11 @@ BATCH_SIZE = 512
 SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
 EMBEDDING_DIM = 768
 # TODO: Hyperparameter Search
-Z_DIM = 32 # Z_DIM can be 32,64,96,128
-SAMPLE_LENGTH = 50 # Sample length can be 50 or 100
-NUM_EPOCHS = 15
+Z_DIM = 32 # Z_DIM choices: 32,64,96,128
+SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
+NUM_EPOCHS = 10
 USE_KL = True
-KL_WEIGHT = 1 # Weights can be 1,3,5,10
+KL_WEIGHT = 3 # Weight choices: 1,3,5,10
 BASE_MODEL_ONLY = True
 
 print("Start Initializing Dataset...")
