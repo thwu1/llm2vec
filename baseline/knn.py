@@ -136,18 +136,20 @@ def evaluate(model_order, train_x, test_x, train_y, test_y, num_neighbors):
     #     print(f"Model: {model}, Accuracy: {acc}")
         
     print(f"Mean Test Accuracy for {num_neighbors} neighbors:", sum(accu) / len(accu))
+    return {"mean_accuracy": sum(accu) / len(accu)}
 
-BASE_MODEL_ONLY = True
-SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
-NUM_NEIGHBORS = 51
-neighbor_sizes = range(90,120)
+if __name__ == "__main__":
+    BASE_MODEL_ONLY = True
+    SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
+    NUM_NEIGHBORS = 51
+    neighbor_sizes = range(90,120)
 
-print(f"Start Initializing Dataset...")
-model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
-        base_model_only=BASE_MODEL_ONLY)
-# model_order, train_prompt_order, test_prompt_order,\
-#     train_x, test_x, train_y, test_y = load_train_test_split(base_model_only=BASE_MODEL_ONLY, sentence_transformer=SENTENCE_TRANSFORMER)
-print(f"Finish Initializing Dataset")
+    print(f"Start Initializing Dataset...")
+    model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
+            base_model_only=BASE_MODEL_ONLY)
+    # model_order, train_prompt_order, test_prompt_order,\
+    #     train_x, test_x, train_y, test_y = load_train_test_split(base_model_only=BASE_MODEL_ONLY, sentence_transformer=SENTENCE_TRANSFORMER)
+    print(f"Finish Initializing Dataset")
 
-for num_neighbors in neighbor_sizes:
-    evaluate(model_order, train_x, test_x, train_y, test_y, num_neighbors)
+    for num_neighbors in neighbor_sizes:
+        evaluate(model_order, train_x, test_x, train_y, test_y, num_neighbors)
