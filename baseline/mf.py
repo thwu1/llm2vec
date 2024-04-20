@@ -14,6 +14,8 @@ import wandb
 import json
 import random
 import argparse
+from ray.train import Checkpoint
+import ray
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -247,23 +249,23 @@ def train_recsys_rating(
 ):
     lr = 3e-4
     weight_decay = 1e-5
-    wandb.init(project="llm2vec")
+    # wandb.init(project="llm2vec")
     optimizer = Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
-    wandb.config.update(
-        {
-            "model": net.eval(),
-            "num_models": num_models,
-            "num_prompts": num_prompts,
-            "loss": loss,
-            "num_epochs": num_epochs,
-            "kwargs": kwargs,
-            "optimizer": "adam",
-            "lr": lr,
-            "weight_decay": weight_decay,
-            "test_ratio": 0.1,
-            "batch_size": batch_size,
-        }
-    )
+    # wandb.config.update(
+    #     {
+    #         "model": net.eval(),
+    #         "num_models": num_models,
+    #         "num_prompts": num_prompts,
+    #         "loss": loss,
+    #         "num_epochs": num_epochs,
+    #         "kwargs": kwargs,
+    #         "optimizer": "adam",
+    #         "lr": lr,
+    #         "weight_decay": weight_decay,
+    #         "test_ratio": 0.1,
+    #         "batch_size": batch_size,
+    #     }
+    # )
 
     def train_loop():  # Inner function for one epoch of training
         net.train()  # Set the model to training mode
@@ -308,13 +310,14 @@ def train_recsys_rating(
 
         embeddings.append(net.get_embedding()[0])
 
-        wandb.log(info)
+        ray.train.report({"test_acc": test_acc}, checkpoint=None)
+        # wandb.log(info)
 
         progress_bar.set_postfix(train_loss=train_loss, test_loss=test_ls, test_acc=test_acc)
         progress_bar.update(1)
 
     progress_bar.close()
-    wandb.finish()
+    # wandb.finish()
 
     # plot evolution of embeddings
     np.save("embeddings.npy", embeddings)
@@ -323,12 +326,12 @@ def train_recsys_rating(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--embedding_dim", type=int, default=20)
-    parser.add_argument("--batch_size", type=int, default=512)
-    parser.add_argument("--num_epochs", type=int, default=25)
+    parser.add_argument("--embedding_dim", type=int, default=256)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--num_epochs", type=int, default=10)
     parser.add_argument("--subset_size", type=int, default=None)
     parser.add_argument("--base_model_only", action="store_true")
-    parser.add_argument("--alpha", type=float, default=0.05, help="noise level")
+    parser.add_argument("--alpha", type=float, default=0.1, help="noise level")
     args = parser.parse_args()
 
     embedding_dim = args.embedding_dim

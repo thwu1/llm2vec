@@ -47,6 +47,7 @@ def evaluate(train_ls, test_ls, num_neighbors=51):
     # for acc, model in zip(accu, model_names):
     #     print(f"Model: {model}, Accuracy: {acc}")
     print("Mean Accuracy:", sum(accu) / len(accu))
+    return {"mean_accuracy": sum(accu) / len(accu), "accuracy": accu, "model_names": model_names}
 
 
 if __name__ == "__main__":
