@@ -148,7 +148,7 @@ class Decoder(nn.Module):  # Get input from encoder which is z and a new questio
         return self.network(x)
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
     def __init__(self, encoder, decoder, sample_length, train_dataloader, val_dataloader=None, test_dataloader=None, 
-                 use_kl=True, kl_weight=1, device='cpu'):
+                 use_kl=True, kl_weight=1, device='cpu', train_on_subset=False):
         self.encoder = encoder.to(device)
         self.decoder = decoder.to(device)
         self.train_dataloader = train_dataloader
@@ -162,6 +162,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         self.use_kl = use_kl
         self.kl_weight = kl_weight
         self.device = device
+        self.train_on_subset = train_on_subset
 
     def train(self, epochs=10):
         test_accuracies = []
@@ -188,7 +189,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
         return kl_div_sum * self.kl_weight
 
-    def train_epoch(self, train_dataloader, train_on_subset=False):
+    def train_epoch(self, train_dataloader):
         total_loss = 0
         gen_indices = True
         for batch in tqdm(train_dataloader):
@@ -230,7 +231,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 loss.backward()
                 self.optimizer.step()
                 # print(f'Loss: {loss}')
-                if train_on_subset:
+                if self.train_on_subset:
                     break
 
         # print(f'Training Loss: {loss}')
@@ -290,13 +291,15 @@ BATCH_SIZE = 512
 # TODO: Try OpenAI's Ada Embedding (remember to cache)
 SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
 EMBEDDING_DIM = 768
+SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
+USE_KL = True
+
 # TODO: Hyperparameter Search
 Z_DIM = 32 # Z_DIM choices: 32,64,96,128
-SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
 NUM_EPOCHS = 10
-USE_KL = True
-KL_WEIGHT = 3 # Weight choices: 1,3,5,10
+KL_WEIGHT = 5 # Weight choices: 1,3,5,10
 BASE_MODEL_ONLY = True
+TRAIN_ON_SUBSET = False
 
 print("Start Initializing Dataset...")
 model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
@@ -311,6 +314,6 @@ test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffl
 encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=True)
 decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
 trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, val_dataloader, test_dataloader, 
-                  use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device)
+                  use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET)
 
 trainer.train(epochs=NUM_EPOCHS)

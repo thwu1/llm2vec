@@ -49,7 +49,7 @@ def split_and_load(batch_size=64, subset_size=None, base_model_only=False):
     num_categories = max_category - min_category + 1
 
     class CustomDataset(Dataset):
-        def __init__(self, data):
+        def __init__(self, data, test=False):
             # print(data["model_id"])
             model_ids = torch.tensor(data["model_id"], dtype=torch.int64)
             # Get unique model IDs and their corresponding new indices
@@ -63,7 +63,19 @@ def split_and_load(batch_size=64, subset_size=None, base_model_only=False):
             # print("Ranked IDs:", ranked_model_ids)
 
             # print(self.models)
-            self.prompts = torch.tensor(data["prompt_id"], dtype=torch.int64)
+            prompt_ids = torch.tensor(data["prompt_id"], dtype=torch.int64)
+            unique_ids, inverse_indices = torch.unique(prompt_ids, sorted=True, return_inverse=True)
+            # Map original IDs to their ranks
+            id_to_rank = {id.item(): rank for rank, id in enumerate(unique_ids)}
+            ranked_prompt_ids = torch.tensor([id_to_rank[id.item()] for id in prompt_ids])
+            if test:
+                self.prompts = ranked_prompt_ids + 900
+            else:
+                self.prompts = ranked_prompt_ids
+
+            print("Original IDs:", prompt_ids)
+            print("Ranked IDs:", ranked_prompt_ids)
+
             self.labels = torch.tensor(data["label"], dtype=torch.int64)
             self.categories = torch.tensor(data["category_id"], dtype=torch.int64)
             self.num_models = len(data["model_id"].unique())
@@ -351,7 +363,7 @@ if __name__ == "__main__":
     subset_size = args.subset_size
     base_model_only = args.base_model_only
     alpha = args.alpha
-    device = torch.device("cuda")
+    device = torch.device("cpu")
 
     (
         num_models,
@@ -366,7 +378,7 @@ if __name__ == "__main__":
     mf = TextMF(
         dim=embedding_dim,
         num_models=num_models,
-        num_prompts=num_prompts,
+        num_prompts=num_prompts, # TODO: Need to change back
         num_classes=num_classes,
         alpha=alpha,
     ).to(device)
