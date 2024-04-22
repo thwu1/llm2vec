@@ -14,6 +14,8 @@ import wandb
 import json
 import random
 import argparse
+from ray.train import Checkpoint
+import ray
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -23,24 +25,21 @@ pwd = os.getcwd()
 
 # data = pd.read_csv(f"{pwd}/data/mmlu_correctness_1k.csv")
 # print(MODEL_NAMES[0:10])
+global_train_data = pd.read_csv(f"{pwd}/data/mmlu_train.csv")
+global_test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
 
-
-def split_and_load(batch_size=64, subset_size=None, base_model_only=False):
-    train_data = pd.read_csv(f"{pwd}/data/mmlu_train.csv")
-    test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
+def split_and_load(batch_size=64, subset_size=None, base_model_only=False, global_train_data=global_train_data, global_test_data=global_test_data):
     # print(train_data.head())
     # print(test_data.head())
 
     if base_model_only:
-        train_data = train_data[~train_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
-        test_data = test_data[~test_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
-        # print(sorted(list(train_data['model_id'].unique())))
-        # print(sorted(list(test_data['model_id'].unique())))
+        train_data = global_train_data[~global_train_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
+        test_data = global_test_data[~global_test_data["model_name"].str.contains("vote|moe")].reset_index(drop=True)
     elif subset_size:
         model_subset = random.sample(list(test_data["model_name"]), subset_size)
         # print(model_subset[:10])
-        train_data = train_data[train_data["model_name"].isin(model_subset)].reset_index(drop=True)
-        test_data = test_data[test_data["model_name"].isin(model_subset)].reset_index(drop=True)
+        train_data = global_train_data[global_train_data["model_name"].isin(model_subset)].reset_index(drop=True)
+        test_data = global_test_data[global_test_data["model_name"].isin(model_subset)].reset_index(drop=True)
         # print(train_data.head())
         # print(test_data.head())
 
@@ -134,8 +133,9 @@ class TextMF(torch.nn.Module):
         self._name = "TextMF"
         self.P = torch.nn.Embedding(num_models, dim)
         self.Q = torch.nn.Embedding(num_prompts, text_dim).requires_grad_(False)
-        embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
-        self.Q.weight.data.copy_(torch.tensor(embeddings))
+        # embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
+        embeddings = torch.load(f"{pwd}/data/prompt_embeddings.pth")
+        self.Q.weight.data.copy_(embeddings)
         self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, dim))
         self.alpha = alpha
 
@@ -165,34 +165,34 @@ class TextMF(torch.nn.Module):
         return torch.argmax(logits, dim=1)
 
 
-class FM(torch.nn.Module):
-    def __init__(self, dim, num_models, num_prompts, num_categories, text_dim=768):
-        super().__init__()
-        self._name = "FM"
-        self.P = torch.nn.Embedding(num_models, dim)
-        self.Q = torch.nn.Embedding(num_prompts, text_dim).requires_grad_(False)
-        embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
-        self.Q.weight.data.copy_(torch.tensor(embeddings))
-        self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, dim))
-        self.category_embedding = torch.nn.Embedding(num_categories, dim)
-        self.classifier = nn.Sequential(nn.Linear(dim, 2))
+# class FM(torch.nn.Module):
+#     def __init__(self, dim, num_models, num_prompts, num_categories, text_dim=768):
+#         super().__init__()
+#         self._name = "FM"
+#         self.P = torch.nn.Embedding(num_models, dim)
+#         self.Q = torch.nn.Embedding(num_prompts, text_dim).requires_grad_(False)
+#         embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
+#         self.Q.weight.data.copy_(torch.tensor(embeddings))
+#         self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, dim))
+#         self.category_embedding = torch.nn.Embedding(num_categories, dim)
+#         self.classifier = nn.Sequential(nn.Linear(dim, 2))
 
-    def forward(self, model, prompt, category):
-        p = self.P(model)
-        q = self.text_proj(self.Q(prompt))
-        v = self.category_embedding(category)
-        return self.classifier(p * q + q * v + p * v)
+#     def forward(self, model, prompt, category):
+#         p = self.P(model)
+#         q = self.text_proj(self.Q(prompt))
+#         v = self.category_embedding(category)
+#         return self.classifier(p * q + q * v + p * v)
 
-    def get_embedding(self):
-        return (
-            self.P.weight.detach().to("cpu").tolist(),
-            self.Q.weight.detach().to("cpu").tolist(),
-        )
+#     def get_embedding(self):
+#         return (
+#             self.P.weight.detach().to("cpu").tolist(),
+#             self.Q.weight.detach().to("cpu").tolist(),
+#         )
 
-    @torch.no_grad()
-    def predict(self, model, prompt, category):
-        logits = self.forward(model, prompt, category)
-        return torch.argmax(logits, dim=1)
+#     @torch.no_grad()
+#     def predict(self, model, prompt, category):
+#         logits = self.forward(model, prompt, category)
+#         return torch.argmax(logits, dim=1)
 
 
 def evaluator(net, test_iter, devices):
@@ -219,43 +219,43 @@ def evaluator(net, test_iter, devices):
     return float(sum(ls_list) / num_samples), correct / num_samples
 
 
-def plot_evolving_embeddings(embeddings, stride=10):
-    markers = ["o", "s", "^", "D", "v", ">", "<", "p", "*", "h"]
-    embeddings = np.array(embeddings)[0::stride]
-    num_points, num_models, dim = embeddings.shape
-    if dim > 2:
-        from sklearn.decomposition import PCA
+# def plot_evolving_embeddings(embeddings, stride=10):
+#     markers = ["o", "s", "^", "D", "v", ">", "<", "p", "*", "h"]
+#     embeddings = np.array(embeddings)[0::stride]
+#     num_points, num_models, dim = embeddings.shape
+#     if dim > 2:
+#         from sklearn.decomposition import PCA
 
-        pca = PCA(n_components=2)
-        embeddings = pca.fit_transform(embeddings.reshape(-1, dim)).reshape(num_points, num_models, 2)
+#         pca = PCA(n_components=2)
+#         embeddings = pca.fit_transform(embeddings.reshape(-1, dim)).reshape(num_points, num_models, 2)
 
-    plt.figure()
+#     plt.figure()
 
-    for i in range(num_models):
-        # Define a single color for each model
-        color = plt.cm.rainbow(i / (num_models - 1))
-        marker = markers[i % len(markers)]
+#     for i in range(num_models):
+#         # Define a single color for each model
+#         color = plt.cm.rainbow(i / (num_models - 1))
+#         marker = markers[i % len(markers)]
 
-        # Define brightness for each point within the model
-        brightness = np.linspace(0.0, 0.25, num_points)  # Adjust brightness from 0.5 to 1
+#         # Define brightness for each point within the model
+#         brightness = np.linspace(0.0, 0.25, num_points)  # Adjust brightness from 0.5 to 1
 
-        for j in range(num_points - 1):
-            line_color = color[:3] + (brightness[j],)  # Set brightness component of the color
-            plt.plot(
-                embeddings[j : j + 2, i, 0],
-                embeddings[j : j + 2, i, 1],
-                marker=marker,
-                linestyle="-",
-                color=line_color,
-                markersize=5,
-            )
+#         for j in range(num_points - 1):
+#             line_color = color[:3] + (brightness[j],)  # Set brightness component of the color
+#             plt.plot(
+#                 embeddings[j : j + 2, i, 0],
+#                 embeddings[j : j + 2, i, 1],
+#                 marker=marker,
+#                 linestyle="-",
+#                 color=line_color,
+#                 markersize=5,
+#             )
 
-        plt.plot([], [], label=MODEL_NAMES[i], color=color, marker=marker)
+#         plt.plot([], [], label=MODEL_NAMES[i], color=color, marker=marker)
 
-    plt.legend()
-    plt.xlabel("Embedding 1")
-    plt.ylabel("Embedding 2")
-    plt.show()
+#     plt.legend()
+#     plt.xlabel("Embedding 1")
+#     plt.ylabel("Embedding 2")
+#     plt.show()
 
 
 def train_recsys_rating(
@@ -273,23 +273,23 @@ def train_recsys_rating(
 ):
     lr = 3e-4
     weight_decay = 1e-5
-    wandb.init(project="llm2vec")
+    # wandb.init(project="llm2vec")
     optimizer = Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
-    wandb.config.update(
-        {
-            "model": net.eval(),
-            "num_models": num_models,
-            "num_prompts": num_prompts,
-            "loss": loss,
-            "num_epochs": num_epochs,
-            "kwargs": kwargs,
-            "optimizer": "adam",
-            "lr": lr,
-            "weight_decay": weight_decay,
-            "test_ratio": 0.1,
-            "batch_size": batch_size,
-        }
-    )
+    # wandb.config.update(
+    #     {
+    #         "model": net.eval(),
+    #         "num_models": num_models,
+    #         "num_prompts": num_prompts,
+    #         "loss": loss,
+    #         "num_epochs": num_epochs,
+    #         "kwargs": kwargs,
+    #         "optimizer": "adam",
+    #         "lr": lr,
+    #         "weight_decay": weight_decay,
+    #         "test_ratio": 0.1,
+    #         "batch_size": batch_size,
+    #     }
+    # )
 
     def train_loop():  # Inner function for one epoch of training
         net.train()  # Set the model to training mode
@@ -334,17 +334,19 @@ def train_recsys_rating(
 
         embeddings.append(net.get_embedding()[0])
 
-        wandb.log(info)
+        ray.train.report({"test_acc": test_acc}, checkpoint=None)
+        # wandb.log(info)
 
+        progress_bar.set_postfix(train_loss=train_loss, test_loss=test_ls, test_acc=test_acc)
         progress_bar.set_postfix(train_loss=train_loss, test_loss=test_ls, test_acc=test_acc)
         progress_bar.update(1)
 
     progress_bar.close()
-    wandb.finish()
+    # wandb.finish()
 
     # plot evolution of embeddings
-    np.save("embeddings.npy", embeddings)
-    plot_evolving_embeddings(embeddings, stride=max(num_epochs // 50, 1))
+    # np.save("embeddings.npy", embeddings)
+    # plot_evolving_embeddings(embeddings, stride=max(num_epochs // 50, 1))
     return max(test_acces)
 
 if __name__ == "__main__":

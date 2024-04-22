@@ -67,8 +67,7 @@ class CustomDataset(Dataset):
         return x, y
 
 class MLP(nn.Module):
-    def __init__(self, input_size, hidden_sizes, output_size, 
-                 linear=False, layernorm=False):  # hidden_sizes is a list
+    def __init__(self, input_size, hidden_sizes, output_size, linear=False, layernorm=False):  # hidden_sizes is a list
         super().__init__()
         self.mlp = nn.Sequential()
         self.mlp.append(nn.Linear(input_size, hidden_sizes[0]))
@@ -83,9 +82,9 @@ class MLP(nn.Module):
         self.mlp.append(nn.Linear(hidden_sizes[-1], output_size))
 
     def forward(self, x):
-        x = self.mlp(x)
-        return x
-    
+        return self.mlp(x)
+
+
 class Encoder(nn.Module):  # Input a sequence of questions and output z
     # TODO: Try LayerNorm
     def __init__(self, c_dim, z_dim, linear=False, layernorm=False):
@@ -154,9 +153,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.test_dataloader = test_dataloader
-        self.optimizer = torch.optim.Adam(
-            list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3
-        )
+        self.optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3)
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.sample_length = sample_length
         self.use_kl = use_kl
@@ -205,8 +202,8 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
             labels = labels[:, indices]
 
             for i in range(0, num_total_question, self.sample_length):
-                p_embeds_sample = p_embeds[:, i:i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
-                labels_sample = labels[:, i:i + self.sample_length]     # Shape: [batch_size, sample_size]
+                p_embeds_sample = p_embeds[:, i : i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
+                labels_sample = labels[:, i : i + self.sample_length]  # Shape: [batch_size, sample_size]
                 # print(p_embeds_sample.shape, labels_sample.shape)
                 # TODO: Add an option of random sampling of subset size (Exponential Distribution, clamp at 30-900)
 
@@ -226,7 +223,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 predicted_labels = (probabilities > 0.5).float()
                 correct_predictions = (predicted_labels == labels_sample[:, 1:].float()).float()
                 accuracy = correct_predictions.mean()
-                    
+
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
