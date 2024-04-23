@@ -13,9 +13,7 @@ import os
 from ray.train import Checkpoint
 import ray
 
-def load_data(base_model_only):
-    pwd = os.getcwd()
-
+def load_data(base_model_only, pwd):
     if base_model_only:
         with open(f'{pwd}/data/model_order_base_only.pkl', 'rb') as file:
             model_order = pickle.load(file)
@@ -178,12 +176,13 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 avg_accuracy = self.evaluate_autoregressive(self.val_dataloader, self.test_dataloader)
             else:
                 avg_accuracy = self.evaluate_max_context(self.val_dataloader, self.test_dataloader)
-
+            
+            # ray.train.report({"test_accuracy": avg_accuracy}, checkpoint=None)
             test_accuracies.append(avg_accuracy)
         
         print(f"Max Test Accuracy: {max(test_accuracies)}")
-        # ray.train.report({"test_accuracy": max(test_accuracies)}, checkpoint=None)
-        return max(test_accuracies)
+        ray.train.report({"test_acc": max(test_accuracies).float().item()}, checkpoint=None)
+        return max(test_accuracies).float().item()
 
     def kl_loss(self, z_means, z_vars):
         z_means = z_means.to(self.device)
@@ -196,7 +195,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         kl_divs = [torch.distributions.kl.kl_divergence(post, prior) for post in posteriors]
         kl_div_sum = torch.mean(torch.stack(kl_divs))
 
-        return kl_div_sum * self.kl_weight
+        return kl_div_sum
 
     def train_epoch_autoregressive(self, train_dataloader):
         total_loss = 0
@@ -232,7 +231,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 # print(posteriors[:, :-1].shape)
                 loss = (loss * posteriors[:, :-1].sum(dim=-1)).mean()
                 if self.use_kl:
-                    loss += self.kl_loss(z_means, z_vars)
+                    loss += self.kl_loss(z_means, z_vars) * self.kl_weight
                 total_loss += loss.item()
 
                 # Calculate accuracy
@@ -285,10 +284,10 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 # print(f"preds: {preds.shape}, labels: {labels_sample.shape}")
                 loss = self.loss_fn(preds[:, -1], labels_sample[:, -1].float())
                 # print(loss, posteriors.shape)
-                loss = (loss * posteriors[:, -1]).mean()
+                loss = (loss * posteriors[:, -1, :].sum(dim=-1)).mean()
                 # print(loss)
                 if self.use_kl:
-                    loss += self.kl_loss(z_means, z_vars)
+                    loss += self.kl_loss(z_means, z_vars) * self.kl_weight
                 total_loss += loss.item()
 
                 # Calculate accuracy
@@ -355,14 +354,13 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
         # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
         batch_size, num_test_question, q_dim = p_embeds_test.shape
-        
         posteriors = torch.exp(logprobs)
         # TODO: Check if this implementation is correct
         preds = self.decoder(zs[:, -1, :].unsqueeze(1).repeat(1, num_test_question, 1), p_embeds_test).squeeze(-1)
         # loss = self.loss_fn(preds, labels_test.float())
         # loss = (loss * posteriors[:, :-1]).mean()
         # if self.use_kl:
-        #     loss += self.kl_loss(z_means, z_vars)
+        #     loss += self.kl_loss(z_means, z_vars) * self.kl_weight
         # total_loss += loss.item()
         
         # Calculate accuracy
@@ -381,39 +379,40 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
             
         return test_accuracy
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
 
-BATCH_SIZE = 512
-# TODO: Try OpenAI's Ada Embedding (remember to cache)
-SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
-EMBEDDING_DIM = 768
-SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
-USE_KL = True
+    BATCH_SIZE = 512
+    # TODO: Try OpenAI's Ada Embedding (remember to cache)
+    SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
+    EMBEDDING_DIM = 768
+    SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
+    USE_KL = True
 
-# TODO: Hyperparameter Search
-Z_DIM = 64 # Z_DIM choices: 32,64,96,128
-NUM_EPOCHS = 20
-KL_WEIGHT = 10 # Weight choices: 1,3,5,10
-LR = 1e-3
-BASE_MODEL_ONLY = True
-TRAIN_ON_SUBSET = False
-AR_TRAIN = True
-AR_EVAL = False # Whether to evaluate autoregressively or just using max context length
+    # TODO: Hyperparameter Search
+    Z_DIM = 64 # Z_DIM choices: 32,64,96,128
+    NUM_EPOCHS = 20
+    KL_WEIGHT = 10 # Weight choices: 1,3,5,10
+    LR = 1e-3
+    BASE_MODEL_ONLY = True
+    TRAIN_ON_SUBSET = False
+    AR_TRAIN = False
+    AR_EVAL = False # Whether to evaluate autoregressively or just using max context length
 
-print("Start Initializing Dataset...")
-model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
-        base_model_only=BASE_MODEL_ONLY)
-train_dataset = CustomDataset(train_x, train_y)
-val_dataset = CustomDataset(val_x, val_y)
-test_dataset = CustomDataset(test_x, test_y)
-print("Finish Initializing Dataset")
-train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
-test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=True, layernorm=True)
-decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
-trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, val_dataloader, test_dataloader, 
-                  lr=LR, use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET)
+    print("Start Initializing Dataset...")
+    model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
+            base_model_only=BASE_MODEL_ONLY)
+    train_dataset = CustomDataset(train_x, train_y)
+    val_dataset = CustomDataset(val_x, val_y)
+    test_dataset = CustomDataset(test_x, test_y)
+    print("Finish Initializing Dataset")
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=True, layernorm=True)
+    decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
+    trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, val_dataloader, test_dataloader, 
+                    lr=LR, use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET)
 
-trainer.train(epochs=NUM_EPOCHS, ar_train=AR_TRAIN, ar_eval=AR_EVAL)
+    trainer.train(epochs=NUM_EPOCHS, ar_train=AR_TRAIN, ar_eval=AR_EVAL)
