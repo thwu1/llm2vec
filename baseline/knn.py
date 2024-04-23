@@ -69,7 +69,7 @@ def load_data(base_model_only):
         test_y = torch.load(f'{pwd}/data/test_y_full.pth')
 
     # print(model_order, train_prompt_order, val_prompt_order, test_prompt_order)
-    print(train_x.shape, train_y.shape, val_x.shape, val_y.shape, test_x.shape, test_y.shape)
+    # print(train_x.shape, train_y.shape, val_x.shape, val_y.shape, test_x.shape, test_y.shape)
     return model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y
 
 def load_train_test_split(base_model_only, sentence_transformer):

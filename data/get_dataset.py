@@ -260,9 +260,19 @@ model_order, train_prompt_order, val_prompt_order, test_prompt_order, \
 store_train_val_test_split(base_model_only=False)
 
 # precompute the embeddings
-model = SentenceTransformer("all-mpnet-base-v2")
-train_prompt_order.extend(test_prompt_order)
-prompts = train_prompt_order
-cleaned_prompts = [prompt.replace("Answer:", "").strip("\n") for prompt in prompts]
-embeddings = model.encode(cleaned_prompts)
-json.dump(embeddings.tolist(), open(f"{pwd}/data/embeddings.json", "w"))
+with open('data/mmlu_train.csv') as f:
+    train_data = pd.read_csv(f)
+
+with open('data/mmlu_test.csv') as f:
+    test_data = pd.read_csv(f)
+
+with open('data/mmlu_val.csv') as f:
+    val_data = pd.read_csv(f)
+
+concat_data = pd.concat([train_data, test_data, val_data])
+
+d = {prompt_id: prompt for prompt_id, prompt in zip(concat_data["prompt_id"], concat_data["prompt"])}
+ls = [d[prompt_id] for prompt_id in range(1000)]
+embedder = SentenceTransformer("all-mpnet-base-v2")
+embeddings = torch.tensor(embedder.encode(ls), dtype=torch.float32)
+torch.save(embeddings, 'data/prompt_embeddings.pth')
