@@ -10,10 +10,10 @@ import pickle
 import pandas as pd
 import random
 import os
+from ray.train import Checkpoint
+import ray
 
-def load_data(base_model_only):
-    pwd = os.getcwd()
-
+def load_data(base_model_only, pwd):
     if base_model_only:
         with open(f'{pwd}/data/model_order_base_only.pkl', 'rb') as file:
             model_order = pickle.load(file)
@@ -147,30 +147,42 @@ class Decoder(nn.Module):  # Get input from encoder which is z and a new questio
         return self.network(x)
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
     def __init__(self, encoder, decoder, sample_length, train_dataloader, val_dataloader=None, test_dataloader=None, 
-                 use_kl=True, kl_weight=1, device='cpu'):
+                 lr = 1e-3, use_kl=True, kl_weight=1, device='cpu', train_on_subset=False):
         self.encoder = encoder.to(device)
         self.decoder = decoder.to(device)
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.test_dataloader = test_dataloader
-        self.optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=1e-3)
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=lr)
+        self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
         self.sample_length = sample_length
         self.use_kl = use_kl
         self.kl_weight = kl_weight
         self.device = device
+        self.train_on_subset = train_on_subset
 
-    def train(self, epochs=10):
+    def train(self, epochs=10, ar_train=True, ar_eval=False):
         test_accuracies = []
         for epoch in range(epochs):
             print(f"Epoch {epoch+1}: ")
-            self.train_epoch(self.train_dataloader)
+
+            if ar_train:
+                self.train_epoch_autoregressive(self.train_dataloader)
+            else:
+                self.train_epoch_max_context(self.train_dataloader)
 
             # if self.test_dataloader and self.val_dataloader:
-            avg_loss, avg_accuracy = self.evaluate(self.val_dataloader, self.test_dataloader)
+            if ar_eval:
+                avg_accuracy = self.evaluate_autoregressive(self.val_dataloader, self.test_dataloader)
+            else:
+                avg_accuracy = self.evaluate_max_context(self.val_dataloader, self.test_dataloader)
+            
+            # ray.train.report({"test_accuracy": avg_accuracy}, checkpoint=None)
             test_accuracies.append(avg_accuracy)
         
         print(f"Max Test Accuracy: {max(test_accuracies)}")
+        ray.train.report({"test_acc": max(test_accuracies).float().item()}, checkpoint=None)
+        return max(test_accuracies).float().item()
 
     def kl_loss(self, z_means, z_vars):
         z_means = z_means.to(self.device)
@@ -183,11 +195,12 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         kl_divs = [torch.distributions.kl.kl_divergence(post, prior) for post in posteriors]
         kl_div_sum = torch.mean(torch.stack(kl_divs))
 
-        return kl_div_sum * self.kl_weight
+        return kl_div_sum
 
-    def train_epoch(self, train_dataloader, train_on_subset=False):
+    def train_epoch_autoregressive(self, train_dataloader):
         total_loss = 0
         gen_indices = True
+        train_accuracies = []
         for batch in tqdm(train_dataloader):
             # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
             p_embeds, labels = batch
@@ -211,29 +224,116 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
                 zs, logprobs, z_means, z_vars = self.encoder(cs)
                 posteriors = torch.exp(logprobs)
                 preds = self.decoder(zs[:, :-1], p_embeds_sample[:, 1:]).squeeze(-1)
+                # print(preds.shape, labels_sample[:, 1:].shape)
                 loss = self.loss_fn(preds, labels_sample[:, 1:].float())
-                loss = (loss * posteriors[:, :-1]).mean()
+                # print(posteriors[:, :-1])
+                # print(loss.shape)
+                # print(posteriors[:, :-1].shape)
+                loss = (loss * posteriors[:, :-1].sum(dim=-1)).mean()
                 if self.use_kl:
-                    loss += self.kl_loss(z_means, z_vars)
+                    loss += self.kl_loss(z_means, z_vars) * self.kl_weight
                 total_loss += loss.item()
 
                 # Calculate accuracy
                 probabilities = torch.sigmoid(preds)
                 predicted_labels = (probabilities > 0.5).float()
                 correct_predictions = (predicted_labels == labels_sample[:, 1:].float()).float()
+                # print(correct_predictions.shape)
+                # print(torch.mean(correct_predictions, dim=0))
                 accuracy = correct_predictions.mean()
+                train_accuracies.append(accuracy)
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
                 # print(f'Loss: {loss}')
-                if train_on_subset:
+                if self.train_on_subset:
                     break
 
         # print(f'Training Loss: {loss}')
-        print(f'Training Accuracy (Autoregressive): {accuracy}')
+        print(f'Training Accuracy (Autoregressive): {sum(train_accuracies)/len(train_accuracies)}')
 
-    def evaluate(self, val_dataloader, test_dataloader):
+    def train_epoch_max_context(self, train_dataloader):
+        total_loss = 0
+        gen_indices = True
+        train_accuracies = []
+        for batch in tqdm(train_dataloader):
+            # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
+            p_embeds, labels = batch
+            p_embeds = p_embeds.to(self.device)
+            labels = labels.to(self.device)
+            batch_size, num_total_question, q_dim = p_embeds.shape
+            if gen_indices:
+                gen_indices = False
+                indices = torch.randperm(num_total_question)
+            p_embeds = p_embeds[:, indices, :]
+            labels = labels[:, indices]
+
+            for i in range(0, num_total_question, self.sample_length):
+                p_embeds_sample = p_embeds[:, i : i + self.sample_length, :]  # Shape: [batch_size, sample_size, prompt_embed_dim]
+                labels_sample = labels[:, i : i + self.sample_length]  # Shape: [batch_size, sample_size]
+                # print(p_embeds_sample.shape, labels_sample.shape)
+                # TODO: Add an option of random sampling of subset size (Exponential Distribution, clamp at 30-900)
+
+                cs = torch.cat((p_embeds_sample, labels_sample.unsqueeze(-1)), dim=-1).to(self.device)
+
+                zs, logprobs, z_means, z_vars = self.encoder(cs)
+                posteriors = torch.exp(logprobs)
+                preds = self.decoder(zs[:, :-1], p_embeds_sample[:, 1:]).squeeze(-1)
+                # print(f"posteriors: {posteriors.shape}")
+                # print(f"preds: {preds.shape}, labels: {labels_sample.shape}")
+                loss = self.loss_fn(preds[:, -1], labels_sample[:, -1].float())
+                # print(loss, posteriors.shape)
+                loss = (loss * posteriors[:, -1, :].sum(dim=-1)).mean()
+                # print(loss)
+                if self.use_kl:
+                    loss += self.kl_loss(z_means, z_vars) * self.kl_weight
+                total_loss += loss.item()
+
+                # Calculate accuracy
+                probabilities = torch.sigmoid(preds)
+                predicted_labels = (probabilities > 0.5).float()
+                correct_predictions = (predicted_labels[:, -1] == labels_sample[:, -1].float()).float()
+                accuracy = correct_predictions.mean()
+                train_accuracies.append(accuracy)
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                # print(f'Loss: {loss}')
+                if self.train_on_subset:
+                    break
+
+        # print(f'Training Loss: {loss}')
+        print(f'Training Accuracy (Max Context Length): {sum(train_accuracies)/len(train_accuracies)}')
+
+    def evaluate_autoregressive(self, val_dataloader, test_dataloader):
+        self.encoder.eval()
+        self.decoder.eval()
+
+        p_embeds_test, labels_test = next(iter(test_dataloader))
+        p_embeds_test = p_embeds_test.to(self.device)
+        labels_test = labels_test.to(self.device)
+        cs = torch.cat((p_embeds_test, labels_test.unsqueeze(-1)), dim=-1).to(self.device)
+
+        zs, logprobs, z_means, z_vars = self.encoder(cs)
+        posteriors = torch.exp(logprobs)
+        preds = self.decoder(zs[:, :-1], p_embeds_test[:, 1:]).squeeze(-1)
+        
+        probabilities = torch.sigmoid(preds)
+        predicted_labels = (probabilities > 0.5).float()
+        correct_predictions = (predicted_labels == labels_test[:, 1:].float()).float()
+        test_accuracy = correct_predictions.mean()
+        # print(torch.mean(correct_predictions, dim=0))
+
+        print(f'Test Accuracy (Autoregressive): {test_accuracy}')
+
+        self.encoder.train()
+        self.decoder.train()
+            
+        return test_accuracy
+
+    def evaluate_max_context(self, val_dataloader, test_dataloader):
         # TODO: Add one more accuracy evaluation method (max sample and evaluate all questions left)
         self.encoder.eval()
         self.decoder.eval()
@@ -254,15 +354,14 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
         # batch: ([batch_size, num_total_question, prompt_embed_dim], [batch_size, num_total_question])
         batch_size, num_test_question, q_dim = p_embeds_test.shape
-        
         posteriors = torch.exp(logprobs)
         # TODO: Check if this implementation is correct
         preds = self.decoder(zs[:, -1, :].unsqueeze(1).repeat(1, num_test_question, 1), p_embeds_test).squeeze(-1)
-        loss = self.loss_fn(preds, labels_test.float())
-        loss = (loss * posteriors[:, :-1]).mean()
-        if self.use_kl:
-            loss += self.kl_loss(z_means, z_vars)
-        total_loss += loss.item()
+        # loss = self.loss_fn(preds, labels_test.float())
+        # loss = (loss * posteriors[:, :-1]).mean()
+        # if self.use_kl:
+        #     loss += self.kl_loss(z_means, z_vars) * self.kl_weight
+        # total_loss += loss.item()
         
         # Calculate accuracy
         probabilities = torch.sigmoid(preds)
@@ -272,42 +371,48 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
         # avg_loss = total_loss
         # avg_accuracy = accuracy
-        # print(f'Test Loss: {avg_loss}')
+        # print(f'Test Loss: {total_loss}')
         print(f'Test Accuracy (Max Context Length): {test_accuracy}')
 
         self.encoder.train()
         self.decoder.train()
             
-        return total_loss, test_accuracy
+        return test_accuracy
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
 
-BATCH_SIZE = 512
-# TODO: Try OpenAI's Ada Embedding (remember to cache)
-SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
-EMBEDDING_DIM = 768
-# TODO: Hyperparameter Search
-Z_DIM = 32 # Z_DIM choices: 32,64,96,128
-SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
-NUM_EPOCHS = 10
-USE_KL = True
-KL_WEIGHT = 3 # Weight choices: 1,3,5,10
-BASE_MODEL_ONLY = True
+    BATCH_SIZE = 512
+    # TODO: Try OpenAI's Ada Embedding (remember to cache)
+    SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
+    EMBEDDING_DIM = 768
+    SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
+    USE_KL = True
 
-print("Start Initializing Dataset...")
-model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
-        base_model_only=BASE_MODEL_ONLY)
-train_dataset = CustomDataset(train_x, train_y)
-val_dataset = CustomDataset(val_x, val_y)
-test_dataset = CustomDataset(test_x, test_y)
-print("Finish Initializing Dataset")
-train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
-test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=True)
-decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
-trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, val_dataloader, test_dataloader, 
-                  use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device)
+    # TODO: Hyperparameter Search
+    Z_DIM = 64 # Z_DIM choices: 32,64,96,128
+    NUM_EPOCHS = 20
+    KL_WEIGHT = 10 # Weight choices: 1,3,5,10
+    LR = 1e-3
+    BASE_MODEL_ONLY = True
+    TRAIN_ON_SUBSET = False
+    AR_TRAIN = False
+    AR_EVAL = False # Whether to evaluate autoregressively or just using max context length
 
-trainer.train(epochs=NUM_EPOCHS)
+    print("Start Initializing Dataset...")
+    model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
+            base_model_only=BASE_MODEL_ONLY)
+    train_dataset = CustomDataset(train_x, train_y)
+    val_dataset = CustomDataset(val_x, val_y)
+    test_dataset = CustomDataset(test_x, test_y)
+    print("Finish Initializing Dataset")
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=True, layernorm=True)
+    decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
+    trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, val_dataloader, test_dataloader, 
+                    lr=LR, use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET)
+
+    trainer.train(epochs=NUM_EPOCHS, ar_train=AR_TRAIN, ar_eval=AR_EVAL)
