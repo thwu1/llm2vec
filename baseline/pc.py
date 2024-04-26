@@ -13,6 +13,16 @@ import os
 from ray.train import Checkpoint
 import ray
 
+# Set seed for reproducibility
+seed = 42 
+torch.manual_seed(seed)
+np.random.seed(seed)
+random.seed(seed)
+
+# If using CUDA (PyTorch with GPU)
+torch.cuda.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)  # for multi-GPU setups
+
 def load_data(base_model_only, pwd):
     if base_model_only:
         with open(f'{pwd}/data/model_order_base_only.pkl', 'rb') as file:
@@ -93,6 +103,7 @@ class Encoder(nn.Module):  # Input a sequence of questions and output z
                                 linear=linear, layernorm=layernorm)
         self.variance_network = MLP(input_size=c_dim, hidden_sizes=[512, 256], output_size=z_dim, 
                                     linear=linear, layernorm=layernorm)
+        self.during_eval = False
 
     def forward(self, cs):  # Input multiple instances of context and output a latent representation of the task
         # Input: cs(context) of shape (batch_size, len, c_dim), batch_size = num_models, len = sample_subset_size
@@ -117,7 +128,11 @@ class Encoder(nn.Module):  # Input a sequence of questions and output z
 
     def sample_z(self, z_means, z_vars):  # Sample from a multivariate gaussian
         posteriors = [torch.distributions.Normal(m, torch.sqrt(s)) for m, s in zip(torch.unbind(z_means), torch.unbind(z_vars))]
-        z = [d.rsample() for d in posteriors]
+        if self.during_eval:
+            # print("Evaluating, Output mean")
+            z = [d.loc for d in posteriors]
+        else:
+            z = [d.rsample() for d in posteriors]
         prob = [d.log_prob(z_) for d, z_ in zip(posteriors, z)]
         return torch.stack(z), torch.stack(prob)
 
@@ -173,15 +188,15 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
             # if self.test_dataloader and self.val_dataloader:
             if ar_eval:
-                avg_accuracy = self.evaluate_autoregressive(self.val_dataloader, self.test_dataloader)
+                test_accuracy = self.evaluate_autoregressive(self.val_dataloader, self.test_dataloader)
             else:
-                avg_accuracy = self.evaluate_max_context(self.val_dataloader, self.test_dataloader)
+                test_accuracy = self.evaluate_max_context(self.val_dataloader, self.test_dataloader)
             
-            # ray.train.report({"test_accuracy": avg_accuracy}, checkpoint=None)
-            test_accuracies.append(avg_accuracy)
+            # ray.train.report({"test_accuracy": test_accuracy}, checkpoint=None)
+            test_accuracies.append(test_accuracy)
         
         print(f"Max Test Accuracy: {max(test_accuracies)}")
-        ray.train.report({"test_acc": max(test_accuracies).float().item()}, checkpoint=None)
+        # ray.train.report({"test_acc": max(test_accuracies).float().item()}, checkpoint=None)
         return max(test_accuracies).float().item()
 
     def kl_loss(self, z_means, z_vars):
@@ -198,6 +213,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         return kl_div_sum
 
     def train_epoch_autoregressive(self, train_dataloader):
+        torch.cuda.manual_seed(seed)
         total_loss = 0
         gen_indices = True
         train_accuracies = []
@@ -254,6 +270,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         print(f'Training Accuracy (Autoregressive): {sum(train_accuracies)/len(train_accuracies)}')
 
     def train_epoch_max_context(self, train_dataloader):
+        torch.cuda.manual_seed(seed)
         total_loss = 0
         gen_indices = True
         train_accuracies = []
@@ -309,6 +326,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
     def evaluate_autoregressive(self, val_dataloader, test_dataloader):
         self.encoder.eval()
+        self.encoder.during_eval = True
         self.decoder.eval()
 
         p_embeds_test, labels_test = next(iter(test_dataloader))
@@ -329,6 +347,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         print(f'Test Accuracy (Autoregressive): {test_accuracy}')
 
         self.encoder.train()
+        self.encoder.during_eval = False
         self.decoder.train()
             
         return test_accuracy
@@ -336,6 +355,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
     def evaluate_max_context(self, val_dataloader, test_dataloader):
         # TODO: Add one more accuracy evaluation method (max sample and evaluate all questions left)
         self.encoder.eval()
+        self.encoder.during_eval = True
         self.decoder.eval()
 
         total_loss = 0
@@ -375,6 +395,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         print(f'Test Accuracy (Max Context Length): {test_accuracy}')
 
         self.encoder.train()
+        self.encoder.during_eval = False
         self.decoder.train()
             
         return test_accuracy
@@ -388,21 +409,23 @@ if __name__ == "__main__":
     SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
     EMBEDDING_DIM = 768
     SAMPLE_LENGTH = 50 # Sample length choices: 50 or 100
-    USE_KL = True
-
-    # TODO: Hyperparameter Search
-    Z_DIM = 64 # Z_DIM choices: 32,64,96,128
     NUM_EPOCHS = 20
-    KL_WEIGHT = 10 # Weight choices: 1,3,5,10
-    LR = 1e-3
+
     BASE_MODEL_ONLY = True
     TRAIN_ON_SUBSET = False
-    AR_TRAIN = False
+    AR_TRAIN = True
     AR_EVAL = False # Whether to evaluate autoregressively or just using max context length
+
+    Z_DIM = 192 # Z_DIM choices: 32,64,96,128
+    USE_KL = True
+    KL_WEIGHT = 1 # Weight choices: 1,3,5,10
+    USE_LINEAR = True
+    USE_LAYERNORM = True
+    LR = 1e-3
 
     print("Start Initializing Dataset...")
     model_order, train_prompt_order, val_prompt_order, test_prompt_order, train_x, train_y, val_x, val_y, test_x, test_y = load_data(
-            base_model_only=BASE_MODEL_ONLY)
+            base_model_only=BASE_MODEL_ONLY, pwd=os.getcwd())
     train_dataset = CustomDataset(train_x, train_y)
     val_dataset = CustomDataset(val_x, val_y)
     test_dataset = CustomDataset(test_x, test_y)
@@ -410,7 +433,7 @@ if __name__ == "__main__":
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
     test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-    encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=True, layernorm=True)
+    encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=USE_LINEAR, layernorm=USE_LAYERNORM)
     decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
     trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader, val_dataloader, test_dataloader, 
                     lr=LR, use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET)
