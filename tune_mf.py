@@ -11,6 +11,7 @@ pwd = os.getcwd()
 global_train_data = pd.read_csv(f"{pwd}/data/mmlu_train.csv")
 global_test_data = pd.read_csv(f"{pwd}/data/mmlu_test.csv")
 
+
 def tune_mf(config, global_train_data, global_test_data):
     embedding_dim = config["embedding_dim"]
     batch_size = 128
@@ -24,14 +25,16 @@ def tune_mf(config, global_train_data, global_test_data):
         train_loader,
         test_loader,
         MODEL_NAMES,
-    ) = split_and_load(batch_size=batch_size, subset_size=None, base_model_only=True, global_train_data=global_train_data, global_test_data=global_test_data)
-    
+    ) = split_and_load(
+        batch_size=batch_size, subset_size=None, base_model_only=True, global_train_data=global_train_data, global_test_data=global_test_data
+    )
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     model = TextMF(
         dim=embedding_dim,
         num_models=num_models,
-        num_prompts=1000, # TODO: Fix this
+        num_prompts=1000,  # TODO: Fix this
         num_classes=num_classes,
         alpha=alpha,
     ).to(device)
@@ -61,7 +64,7 @@ tuner = tune.Tuner(
         num_samples=300,
         search_alg=OptunaSearch(metric="test_acc", mode="max"),
         # scheduler=ASHAScheduler(metric="test_acc", mode="max"),
-    ),
+    )
 )
 
 results = tuner.fit()
