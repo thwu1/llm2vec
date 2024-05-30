@@ -11,3 +11,4 @@ mmlu_response_generation
 data
 *.ipynb
 *.pth
+*.txt
