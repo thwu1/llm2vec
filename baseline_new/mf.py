@@ -192,6 +192,7 @@ def train_recsys_rating(
         start_time = time.time()
         for idx, (models, prompts, labels, categorys) in enumerate(train_iter):
             # Assuming devices refer to potential GPU usage
+            # print(models)
             models = models.to(devices[0])
             prompts = prompts.to(devices[0])
             labels = labels.to(devices[0])
@@ -300,3 +301,6 @@ if __name__ == "__main__":
     )
     print(f"Embedding Dim: {embedding_dim}, Alpha: {alpha}")
     print(f"Max Test Accuracy: {max_test_acc}")
+
+    # print(mf.P.weight.shape)
+    # torch.save(mf.P.weight, "data_new/optimal_mf_model_embeddings.pth")
