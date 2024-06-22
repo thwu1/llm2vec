@@ -111,13 +111,13 @@ def split_and_load(global_train_data, global_test_data, batch_size=64, subset_si
 
 
 class TextMF(torch.nn.Module):
-    def __init__(self, dim, num_models, num_prompts, text_dim=768, num_classes=2, alpha=0.05):
+    def __init__(self, embedding_path, dim, num_models, num_prompts, text_dim=768, num_classes=2, alpha=0.05):
         super().__init__()
         self._name = "TextMF"
         self.P = torch.nn.Embedding(num_models, dim)
         self.Q = torch.nn.Embedding(num_prompts, text_dim).requires_grad_(False)
         # embeddings = json.load(open(f"{pwd}/data/embeddings.json"))
-        embeddings = torch.load(f"{pwd}/data_new/new_prompt_embeddings.pth")
+        embeddings = torch.load(embedding_path)
         self.Q.weight.data.copy_(embeddings)
         self.text_proj = nn.Sequential(torch.nn.Linear(text_dim, dim))
         self.alpha = alpha
@@ -244,6 +244,10 @@ if __name__ == "__main__":
     EMBED_DIM = 232
     ALPHA = 0.001
     TEST_MODE = True
+    EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings.pth"
+    TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/mf_embedding_check_train_set.csv"
+    VAL_DATA_PATH = f"{pwd}/data_new/new_val_set.csv"
+    TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/mf_embedding_check_test_set.csv"
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--embedding_dim", type=int, default=EMBED_DIM)
@@ -255,11 +259,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Start Loading Dataset")
-    global_train_data = pd.read_csv(f"{pwd}/data_new/new_train_set.csv")
+    global_train_data = pd.read_csv(TRAIN_DATA_PATH)
     if TEST_MODE:
-        global_test_data = pd.read_csv(f"{pwd}/data_new/new_test_set.csv")
+        global_test_data = pd.read_csv(TEST_DATA_PATH)
     else:
-        global_test_data = pd.read_csv(f"{pwd}/data_new/new_val_set.csv")
+        global_test_data = pd.read_csv(VAL_DATA_PATH)
     print("Finish Loading Dataset")
 
     embedding_dim = args.embedding_dim
@@ -282,6 +286,7 @@ if __name__ == "__main__":
                        batch_size=batch_size, subset_size=subset_size, base_model_only=base_model_only,)
 
     mf = TextMF(
+        embedding_path=EMBEDDING_PATH,
         dim=embedding_dim,
         num_models=num_models,
         num_prompts=35673, # TODO: fix this
@@ -302,5 +307,5 @@ if __name__ == "__main__":
     print(f"Embedding Dim: {embedding_dim}, Alpha: {alpha}")
     print(f"Max Test Accuracy: {max_test_acc}")
 
-    # print(mf.P.weight.shape)
-    # torch.save(mf.P.weight, "data_new/optimal_mf_model_embeddings.pth")
+    print(mf.P.weight.shape)
+    torch.save(mf.P.weight, "data_new/mf_embedding_test/optimal_mf_model_embeddings.pth")

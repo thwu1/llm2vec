@@ -10,16 +10,6 @@ import pandas as pd
 import random,os,ray,time,pickle
 from ray.train import Checkpoint
 
-# Set seed for reproducibility
-SEED = 42 
-torch.manual_seed(SEED)
-np.random.seed(SEED)
-random.seed(SEED)
-
-# If using CUDA (PyTorch with GPU)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # for multi-GPU setups
-
 def load_data(pwd):
     train_x = torch.tensor(torch.load(f'{pwd}/data_new/new_train_x.pth')).float()
     train_y = torch.tensor(torch.load(f'{pwd}/data_new/new_train_y.pth')).float()
@@ -122,24 +112,38 @@ class Encoder(nn.Module):  # Input a sequence of questions and output z
 
 
 class Decoder(nn.Module):  # Get input from encoder which is z and a new question, concat or project to same dim and dot product
-    def __init__(self, q_dim, z_dim, linear=False, layernorm=False):
+    def __init__(self, q_dim, z_dim, use_concat=False, linear=False, layernorm=False, normalize=False):
         super().__init__()
-        self.network = MLP(
-            input_size=z_dim + q_dim, hidden_sizes=[128, 16], output_size=1,
-            linear=linear, layernorm=layernorm
-        )
+        self.q_proj = nn.Sequential(torch.nn.Linear(q_dim, z_dim))
+        self.use_concat = use_concat
+        self.linear = linear
+        self.layernorm = layernorm
+        self.normalize = normalize
+        if self.use_concat:
+            input_dim = z_dim + q_dim
+        else:
+            input_dim = z_dim
+        self.classifier = MLP(
+            input_size=input_dim, hidden_sizes=[128, 16], output_size=1, linear=linear, layernorm=layernorm)
 
     def forward(self, zs, qs):
         # zs: [batch_size, len, z_dim]
         # qs: [batch_size, len, q_dim]
         # return [batch_size, len]
-        x = torch.cat(
-            (zs, qs), dim=-1
-        )
-        # print(zs.shape)
-        # print(qs.shape)
-        # print(x.shape)
-        return self.network(x)
+
+        # Normalize zs
+        if self.normalize:
+            zs = F.normalize(zs, p=2, dim=2)
+
+        if self.use_concat:
+            x = torch.cat((zs, qs), dim=-1)
+        else:
+            qs = self.q_proj(qs)
+            x = zs * qs
+
+        y = self.classifier(x)
+        return y
+    
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
     def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, 
                  lr = 1e-3, use_kl=True, kl_weight=1, device='cpu', train_on_subset=False, train_break_threshold=100):
@@ -659,11 +663,21 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         return test_accs/self.test_num
 
 if __name__ == "__main__":
+    # Set seed for reproducibility
+    SEED = 42 
+    torch.manual_seed(SEED)
+    np.random.seed(SEED)
+    random.seed(SEED)
+
+    # If using CUDA (PyTorch with GPU)
+    torch.cuda.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)  # for multi-GPU setups
+    
     assert torch.cuda.is_available(), "No GPU Available"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
-    BATCH_SIZE = 1
+    BATCH_SIZE = 16
     # TODO: Try OpenAI's Ada Embedding (remember to cache)
     SENTENCE_TRANSFORMER = "all-mpnet-base-v2"
     EMBEDDING_DIM = 768
@@ -671,19 +685,23 @@ if __name__ == "__main__":
 
     BASE_MODEL_ONLY = True
     TRAIN_ON_SUBSET = True
-    TRAIN_BREAK_THRESHOLD = 10
-    SAMPLE_LENGTH = 150
+    TRAIN_BREAK_THRESHOLD = 50
+    SAMPLE_LENGTH = 200
     AR_TRAIN = True # Whether to train autoregressively or just using max context length
     AR_EVAL = False # Whether to evaluate autoregressively or just using max context length
 
     Z_DIM = 192 # Z_DIM choices: 32,64,96,128
     USE_KL = True
     KL_WEIGHT = 1 # Weight choices: 1,3,5,10
-    USE_LINEAR = False
-    USE_LAYERNORM = True
+    ENCODER_USE_LINEAR = True
+    ENCODER_USE_LAYERNORM = True
+    DECODER_USE_LINEAR = False
+    DECODER_USE_LAYERNORM = False
+    DECODER_NORMALIZE = False
+    USE_CONCAT = False
     LR = 3e-4
 
-    print(f"Using sample_length={SAMPLE_LENGTH}, z_dim={Z_DIM}, kl_weight={KL_WEIGHT}, linear={USE_LINEAR}, layernorm={USE_LAYERNORM}")
+    print(f"Using sample_length={SAMPLE_LENGTH}, z_dim={Z_DIM}, kl_weight={KL_WEIGHT},encoder_linear={ENCODER_USE_LINEAR}, encoder_layernorm={ENCODER_USE_LAYERNORM}, decoder_linear={DECODER_USE_LINEAR}, decoder_layernorm={DECODER_USE_LAYERNORM}, decoder_normalize={DECODER_NORMALIZE}")
     print("Start Initializing Dataset...")
     train_x, train_y, train_val_x, train_val_y, val_x, val_y, test_x, test_y = load_data(pwd=os.getcwd())
     train_dataset = CustomDataset(train_x, train_y)
@@ -695,8 +713,8 @@ if __name__ == "__main__":
     # train_val_dataloader = DataLoader(dataset=train_val_dataset, batch_size=BATCH_SIZE, shuffle=False)
     val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
     test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-    encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=USE_LINEAR, layernorm=USE_LAYERNORM)
-    decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM)
+    encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=ENCODER_USE_LINEAR, layernorm=ENCODER_USE_LAYERNORM)
+    decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM, use_concat=USE_CONCAT, linear=DECODER_USE_LINEAR, normalize=DECODER_NORMALIZE)
     trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader=train_dataloader, test_dataloader=val_dataloader, 
                     lr=LR, use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET,
                     train_break_threshold=TRAIN_BREAK_THRESHOLD)
