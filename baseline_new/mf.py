@@ -245,9 +245,10 @@ if __name__ == "__main__":
     ALPHA = 0.001
     TEST_MODE = True
     EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings.pth"
-    TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/mf_embedding_check_train_set.csv"
+    TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/gsm8k_social_train.csv"
     VAL_DATA_PATH = f"{pwd}/data_new/new_val_set.csv"
-    TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/mf_embedding_check_test_set.csv"
+    TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/gsm8k_social_test.csv"
+    SAVED_EMBEDDING_PATH = "data_new/mf_embedding_test/gsm8k_social_embedding.pth"
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--embedding_dim", type=int, default=EMBED_DIM)
@@ -307,5 +308,5 @@ if __name__ == "__main__":
     print(f"Embedding Dim: {embedding_dim}, Alpha: {alpha}")
     print(f"Max Test Accuracy: {max_test_acc}")
 
-    print(mf.P.weight.shape)
-    torch.save(mf.P.weight, "data_new/mf_embedding_test/optimal_mf_model_embeddings.pth")
+    # print(mf.P.weight.shape)
+    torch.save(mf.P.weight, SAVED_EMBEDDING_PATH)

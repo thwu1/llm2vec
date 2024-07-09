@@ -9,12 +9,13 @@ import numpy as np
 import pandas as pd
 import random,os,ray,time,pickle
 from ray.train import Checkpoint
+from sklearn.cluster import KMeans
 
 def load_data(pwd):
     train_x = torch.tensor(torch.load(f'{pwd}/data_new/new_train_x.pth')).float()
     train_y = torch.tensor(torch.load(f'{pwd}/data_new/new_train_y.pth')).float()
-    train_val_x = torch.tensor(torch.load(f'{pwd}/data_new/pc_new_train_val_x.pth')).float()
-    train_val_y = torch.tensor(torch.load(f'{pwd}/data_new/pc_new_train_val_y.pth')).float()
+    train_val_x = torch.tensor(torch.load(f'{pwd}/data_new/evenly_by_benchmark/reference_set_evenly_from_benchmark_x.pth')).float()
+    train_val_y = torch.tensor(torch.load(f'{pwd}/data_new/evenly_by_benchmark/reference_set_evenly_from_benchmark_y.pth')).float()
     val_x = torch.tensor(torch.load(f'{pwd}/data_new/new_val_x.pth')).float()
     val_y = torch.tensor(torch.load(f'{pwd}/data_new/new_val_y.pth')).float()
     test_x = torch.tensor(torch.load(f'{pwd}/data_new/new_test_x.pth')).float()
@@ -22,6 +23,27 @@ def load_data(pwd):
     
     print(train_x.shape, train_y.shape, val_x.shape, val_y.shape, test_x.shape, test_y.shape)
     return train_x, train_y, train_val_x, train_val_y, val_x, val_y, test_x, test_y
+
+def create_clusters(x, K):
+    # Perform k-means clustering on the question embeddings (29673 x 768)
+    question_embeddings = x[0]  # shape: (29673, 768)
+    kmeans_model = KMeans(n_clusters=K, random_state=42)
+    clusters = kmeans_model.fit_predict(question_embeddings)
+
+    # Create a mapping from cluster indices to question indices
+    cluster_to_indices = {i: [] for i in range(K)}
+    for idx, cluster in enumerate(clusters):
+        cluster_to_indices[cluster].append(idx)
+
+    return cluster_to_indices, kmeans_model
+
+def create_cluster_batches(x, y, clusters):
+    cluster_batches = []
+    for cluster, indices in clusters.items():
+        cluster_x = x[:, indices, :]
+        cluster_y = y[:, indices]
+        cluster_batches.append((cluster_x, cluster_y))
+    return cluster_batches
 
 class CustomDataset(Dataset):
     # x: (batch_size, num_total_questions, question_embedding_dim)
@@ -145,12 +167,14 @@ class Decoder(nn.Module):  # Get input from encoder which is z and a new questio
         return y
     
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
-    def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, 
-                 lr = 1e-3, use_kl=True, kl_weight=1, device='cpu', train_on_subset=False, train_break_threshold=100):
+    def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, ref_dataloader=None,
+                 lr = 1e-3, use_kl=True, kl_weight=1, device='cpu', train_on_subset=False, train_break_threshold=100,
+                 test_seeds=None, use_clustering=False, train_clusters=None, kmeans_model=None, test_clusters=None):
         self.encoder = encoder.to(device)
         self.decoder = decoder.to(device)
         self.train_dataloader = train_dataloader
         self.test_dataloader = test_dataloader
+        self.ref_dataloader = ref_dataloader
         self.optimizer = torch.optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=lr)
         self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
         self.sample_length = sample_length
@@ -159,36 +183,53 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         self.device = device
         self.train_on_subset = train_on_subset
         self.train_break_threshold = train_break_threshold
+        self.use_clustering = use_clustering
+        if self.use_clustering:
+            self.train_clusters = train_clusters
+            self.test_clusters = test_clusters
+            self.kmeans_model = kmeans_model
+        if self.train_on_subset:
+            print("TRAINING ON SUBSET!")
 
         NUM_TESTS = 5
-        TEST_SEEDS = [random.randint(1, 1000) for i in range(NUM_TESTS)]
         self.test_num = NUM_TESTS
-        self.test_seeds = TEST_SEEDS
+        if test_seeds:
+            self.test_seeds = test_seeds
+        else:
+            TEST_SEEDS = [random.randint(1, 1000) for i in range(NUM_TESTS)]
+            self.test_seeds = TEST_SEEDS
         print(f"Random Seeds: {self.test_seeds}")
 
 
     def train(self, epochs=10, ar_train=True, ar_eval=False):
         test_accuracies = []
         # Prepare the "Reference Set"
-        self.prepare_eval_datasets()
+        if self.use_clustering:
+            self.prepare_clustered_reference_set()
+        else:
+            self.prepare_reference_set()
         for epoch in range(epochs):
             print(f"Epoch {epoch+1}: ")
-
-            if ar_train:
+            
+            if self.use_clustering:
+                self.train_epoch_clustered(self.train_clusters)
+            elif ar_train:
                 self.train_epoch_autoregressive(self.train_dataloader)
             else:
                 self.train_epoch_max_context(self.train_dataloader)
 
-            if ar_eval:
+            if self.use_clustering:
+                test_accuracy = self.evaluate_clustered()
+            elif ar_eval:
                 test_accuracy = self.evaluate_autoregressive(self.val_dataloader, self.test_dataloader)
             else:
-                test_accuracy = self.evaluate_max_context(self.train_dataloader, self.test_dataloader)
+                test_accuracy = self.evaluate_max_context()
             
             # ray.train.report({"test_accuracy": test_accuracy}, checkpoint=None)
             test_accuracies.append(test_accuracy)
         
         print(f"Max Test Accuracy: {max(test_accuracies)}")
-        # ray.train.report({"test_acc": max(test_accuracies).float().item()}, checkpoint=None)
+        ray.train.report({"test_acc": max(test_accuracies).float().item()}, checkpoint=None)
         return max(test_accuracies).float().item()
 
     def kl_loss(self, z_means, z_vars):
@@ -205,7 +246,6 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         return kl_div_sum
 
     def train_epoch_autoregressive(self, train_dataloader):
-        torch.cuda.manual_seed(SEED)
         total_loss = 0
         gen_indices = True
         train_accuracies = []
@@ -367,6 +407,11 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         # print(f'Training Loss: {loss}')
         print(f'Training Accuracy (Autoregressive): {sum(train_accuracies)/len(train_accuracies)}')
 
+    def train_epoch_clustered(self, cluster):
+        for cluster_x, cluster_y in cluster:
+            cluster_dataloader = DataLoader(dataset=CustomDataset(cluster_x, cluster_y), batch_size=BATCH_SIZE, shuffle=True)
+            self.train_epoch_autoregressive(cluster_dataloader)
+
     # def train_epoch_max_context(self, train_dataloader):
     #     torch.cuda.manual_seed(seed)
     #     total_loss = 0
@@ -494,12 +539,19 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
     #     self.decoder.train()
             
     #     return test_accuracy
-    def prepare_eval_datasets(self):
-        print("Start Preparing Eval Datasets")
+
+    def prepare_reference_set(self):
         train_val_p_embeds = []
         train_val_labels = []
 
-        for batch in self.train_dataloader:
+        if self.ref_dataloader:
+            train_val_set = self.ref_dataloader
+            print("Start Preparing Eval Datasets Using Reference Set")
+        else:
+            train_val_set = self.train_dataloader
+            print("Start Preparing Eval Datasets Using Random Sample from Training Set")
+
+        for batch in train_val_set:
             p_embeds, labels = batch
             train_val_p_embeds.append(p_embeds)
             train_val_labels.append(labels)
@@ -547,7 +599,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         print(self.labels_test.shape)
         print("Finish Preparing Eval Datasets")
 
-    def evaluate_max_context(self, train_val_dataloader, test_dataloader):
+    def evaluate_max_context(self):
         # TODO: Change Logic: Fix K seed and Test K times, each time shuffle using a seed and take first "sample_length" questions
         # TODO: And evaluate all questions left in test_dataloader
         self.encoder.eval()
@@ -661,7 +713,70 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         self.decoder.train()
             
         return test_accs/self.test_num
+    
+    def prepare_clustered_reference_set(self):
+        clustered_reference_set = {}
+        for (index, (cluster_x, cluster_y)) in enumerate(self.train_clusters):
+            one_cluster_ref_set = []
+            for k in range(self.test_num):
+                seed = self.test_seeds[k]
+                torch.manual_seed(seed)
 
+                indices = torch.randperm(cluster_x.shape[1])
+                cluster_x = cluster_x[:, indices, :]
+                cluster_y = cluster_y[:, indices]
+                cluster_x_sample = cluster_x[:, :self.sample_length, :]
+                cluster_y_sample = cluster_y[:, :self.sample_length]
+                one_cluster_ref_set.append((cluster_x_sample, cluster_y_sample))
+            clustered_reference_set[index] = one_cluster_ref_set
+        self.clustered_reference_set = clustered_reference_set
+        return
+    
+    def evaluate_clustered(self):
+        self.encoder.eval()
+        self.encoder.during_eval = True
+        self.decoder.eval()
+        
+        clustered_test_accs = {i:0 for i in range(len(self.train_clusters))}
+
+        for index in range(len(self.train_clusters)):
+            test_cluster_x, test_cluster_y = self.test_clusters[index]
+            # print(test_cluster_x.shape, test_cluster_y.shape)
+            ref_cluster_set = self.clustered_reference_set[index]
+            for k in range(self.test_num):
+                ref_cluster_x_sample, ref_cluster_y_sample = ref_cluster_set[k]
+                ref_cluster_x_sample = ref_cluster_x_sample.to(self.device)
+                ref_cluster_y_sample = ref_cluster_y_sample.to(self.device)
+                cs = torch.cat((ref_cluster_x_sample, ref_cluster_y_sample.unsqueeze(-1)), dim=-1).to(self.device)
+                # print(cs.shape)
+                zs, logprobs, z_means, z_vars = self.encoder(cs)
+
+                test_cluster_x = test_cluster_x.to(self.device)
+                test_cluster_y = test_cluster_y.to(self.device)
+                batch_size, num_test_question, q_dim = test_cluster_x.shape
+                # print(p_embeds_test.shape)
+                posteriors = torch.exp(logprobs)
+                preds = self.decoder(zs[:, -1, :].unsqueeze(1).repeat(1, num_test_question, 1), test_cluster_x).squeeze(-1)
+
+                # Calculate accuracy
+                probabilities = torch.sigmoid(preds)
+                predicted_labels = (probabilities > 0.5).float()
+                correct_predictions = (predicted_labels == test_cluster_y.float()).float()
+                test_accuracy = correct_predictions.mean()
+                # print(f"Test Accuracy (Max Context Length) for round {k}: {test_accuracy}")
+                clustered_test_accs[index] += test_accuracy
+
+        clustered_test_accs = {key: value / self.test_num for key, value in clustered_test_accs.items()}
+        # print(clustered_test_accs)
+        final_avg_test_acc = sum(clustered_test_accs.values())/len(clustered_test_accs.values())
+        print(f'Average test accuracy over {self.test_num} times over all clusters: {final_avg_test_acc}')
+
+        self.encoder.train()
+        self.encoder.during_eval = False
+        self.decoder.train()
+            
+        return final_avg_test_acc
+    
 if __name__ == "__main__":
     # Set seed for reproducibility
     SEED = 42 
@@ -684,39 +799,73 @@ if __name__ == "__main__":
     NUM_EPOCHS = 20
 
     BASE_MODEL_ONLY = True
-    TRAIN_ON_SUBSET = True
-    TRAIN_BREAK_THRESHOLD = 50
+    TRAIN_ON_SUBSET = False
+    TRAIN_BREAK_THRESHOLD = 1
     SAMPLE_LENGTH = 200
     AR_TRAIN = True # Whether to train autoregressively or just using max context length
     AR_EVAL = False # Whether to evaluate autoregressively or just using max context length
 
     Z_DIM = 192 # Z_DIM choices: 32,64,96,128
     USE_KL = True
-    KL_WEIGHT = 1 # Weight choices: 1,3,5,10
+    KL_WEIGHT = 3 # Weight choices: 1,3,5,10
     ENCODER_USE_LINEAR = True
     ENCODER_USE_LAYERNORM = True
     DECODER_USE_LINEAR = False
     DECODER_USE_LAYERNORM = False
     DECODER_NORMALIZE = False
-    USE_CONCAT = False
+    USE_CONCAT = True
+    USE_CLUSTERING = True
+    NUM_CLUSTERS = 10
     LR = 3e-4
 
-    print(f"Using sample_length={SAMPLE_LENGTH}, z_dim={Z_DIM}, kl_weight={KL_WEIGHT},encoder_linear={ENCODER_USE_LINEAR}, encoder_layernorm={ENCODER_USE_LAYERNORM}, decoder_linear={DECODER_USE_LINEAR}, decoder_layernorm={DECODER_USE_LAYERNORM}, decoder_normalize={DECODER_NORMALIZE}")
+    print(f"Using sample_length={SAMPLE_LENGTH}, z_dim={Z_DIM}, kl_weight={KL_WEIGHT}, encoder_linear={ENCODER_USE_LINEAR}, encoder_layernorm={ENCODER_USE_LAYERNORM}, decoder_linear={DECODER_USE_LINEAR}, decoder_layernorm={DECODER_USE_LAYERNORM}, decoder_normalize={DECODER_NORMALIZE}")
     print("Start Initializing Dataset...")
     train_x, train_y, train_val_x, train_val_y, val_x, val_y, test_x, test_y = load_data(pwd=os.getcwd())
+    print(train_x.shape)
+    print(train_y.shape)
+
+    if USE_CLUSTERING:
+        print("Start Clustering")
+        # Perform clustering
+        train_clusters, kmeans_model = create_clusters(train_x, NUM_CLUSTERS)
+
+        # Create cluster batches
+        train_cluster_batches = create_cluster_batches(train_x, train_y, train_clusters)
+
+        # Print shapes of each batch to verify
+        # for i, (batch_x, batch_y) in enumerate(cluster_batches):
+        #     print(f"Batch {i}:")
+        #     print(f"  x shape: {batch_x.shape}")
+        #     print(f"  y shape: {batch_y.shape}") 
+        test_clusters = kmeans_model.predict(val_x[0])
+        test_cluster_to_indices = {i: [] for i in range(NUM_CLUSTERS)}
+        for idx, cluster in enumerate(test_clusters):
+            test_cluster_to_indices[cluster].append(idx)
+        # print(test_clusters)
+        test_cluster_batches = create_cluster_batches(val_x, val_y, test_cluster_to_indices)
+        print("Finish Clustering")
+    else:
+        train_cluster_batches = None
+        kmeans_model = None
+        test_cluster_batches = None
+
     train_dataset = CustomDataset(train_x, train_y)
-    # train_val_dataset = CustomDataset(train_val_x, train_val_y)
+    train_val_dataset = CustomDataset(train_val_x, train_val_y)
     val_dataset = CustomDataset(val_x, val_y)
     test_dataset = CustomDataset(test_x, test_y)
     print("Finish Initializing Dataset")
+
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    # train_val_dataloader = DataLoader(dataset=train_val_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    train_val_dataloader = DataLoader(dataset=train_val_dataset, batch_size=BATCH_SIZE, shuffle=True)
     val_dataloader = DataLoader(dataset=val_dataset, batch_size=BATCH_SIZE, shuffle=False)
     test_dataloader = DataLoader(dataset=test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+
     encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=ENCODER_USE_LINEAR, layernorm=ENCODER_USE_LAYERNORM)
     decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM, use_concat=USE_CONCAT, linear=DECODER_USE_LINEAR, normalize=DECODER_NORMALIZE)
-    trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, train_dataloader=train_dataloader, test_dataloader=val_dataloader, 
+    trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, 
+                    train_dataloader=train_dataloader, test_dataloader=val_dataloader, ref_dataloader=train_val_dataloader,
                     lr=LR, use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET,
-                    train_break_threshold=TRAIN_BREAK_THRESHOLD)
+                    train_break_threshold=TRAIN_BREAK_THRESHOLD, use_clustering=USE_CLUSTERING,
+                    train_clusters=train_cluster_batches, kmeans_model=kmeans_model, test_clusters=test_cluster_batches)
 
     trainer.train(epochs=NUM_EPOCHS, ar_train=AR_TRAIN, ar_eval=AR_EVAL)

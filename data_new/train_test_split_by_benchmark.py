@@ -3,6 +3,11 @@ import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 
+TRAIN_BENCHMARK_LS = ['medmcqa','piqa','asdiv','logiqa','truthfulqa','mathqa','mmlu','gsm8k',]
+TEST_BENCHMARK_LS = ['gpqa','social',]
+TRAIN_DATA_OUTPUT_PATH = "mf_embedding_test/gpqa_social_train.csv"
+TEST_DATA_OUTPUT_PATH = "mf_embedding_test/gpqa_social_test.csv"
+
 data = pd.read_csv("all_responses.csv", index_col=0)
 # data['question_source'] = data['question_id'].apply(lambda x: '_'.join(x.rsplit('_', 1)[:-1]))
 data['source'] = data['question_id'].apply(lambda x: x.split('_')[0])
@@ -32,24 +37,20 @@ embedding_tensor = torch.zeros((num_questions, embedding_dim))
 for idx, (prompt_id, _) in enumerate(unique_prompts.iterrows()):
     embedding_tensor[prompt_id] = embeddings[idx]
 
-torch.save(embedding_tensor, 'mf_embedding_test/prompt_embeddings.pth')
+# torch.save(embedding_tensor, 'mf_embedding_test/prompt_embeddings.pth')
 print(f"Embedding tensor shape: {embedding_tensor.shape}")
-transformed_data.to_csv("mf_embedding_test/transformed_responses_mf.csv", index=False)
+# transformed_data.to_csv("mf_embedding_test/transformed_responses_mf.csv", index=False)
 unique_question_ids = transformed_data['prompt_id'].unique()
 
-train_benchmark_ls = ['gpqa', 'mmlu', 'medmcqa', 'piqa', 'asdiv', 
-                      'truthfulqa', 'logiqa', 'gsm8k']
-test_benchmark_ls = ['mathqa', 'social']
-mf_embedding_check_train_data = transformed_data[transformed_data['source'].isin(train_benchmark_ls)]
-mf_embedding_check_test_data = transformed_data[transformed_data['source'].isin(test_benchmark_ls)]
-
+mf_embedding_check_train_data = transformed_data[transformed_data['source'].isin(TRAIN_BENCHMARK_LS)]
+mf_embedding_check_test_data = transformed_data[transformed_data['source'].isin(TEST_BENCHMARK_LS)]
 
 # Save the splits into separate CSV files
 # val_data.to_csv("new_validation_set.csv", index=False)
 # test_data.to_csv("new_test_set.csv", index=False)
 # train_data.to_csv("new_train_set.csv", index=False)
-mf_embedding_check_train_data.to_csv("mf_embedding_test/mf_embedding_check_train_set.csv", index=False)
-mf_embedding_check_test_data.to_csv("mf_embedding_test/mf_embedding_check_test_set.csv", index=False)
+mf_embedding_check_train_data.to_csv(TRAIN_DATA_OUTPUT_PATH, index=False)
+mf_embedding_check_test_data.to_csv(TEST_DATA_OUTPUT_PATH, index=False)
 
 # Print the number of rows in each split to verify
 # print(f"Training set size: {train_data.shape}")

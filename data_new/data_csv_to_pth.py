@@ -3,9 +3,9 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch
 
-DATA_PATH = "pc_new_train_val_set.csv"
-OUTPUT_PATH_X = "pc_new_train_val_x.pth"
-OUTPUT_PATH_Y = "pc_new_train_val_y.pth"
+DATA_PATH = "evenly_by_benchmark/reference_set_evenly_from_benchmark.csv"
+OUTPUT_PATH_X = "evenly_by_benchmark/reference_set_evenly_from_benchmark_x.pth"
+OUTPUT_PATH_Y = "evenly_by_benchmark/reference_set_evenly_from_benchmark_y.pth"
 
 df = pd.read_csv(DATA_PATH)
 
