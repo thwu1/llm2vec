@@ -169,7 +169,8 @@ class Decoder(nn.Module):  # Get input from encoder which is z and a new questio
 class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th questions' answer
     def __init__(self, encoder, decoder, sample_length, train_dataloader, test_dataloader=None, ref_dataloader=None,
                  lr = 1e-3, use_kl=True, kl_weight=1, device='cpu', train_on_subset=False, train_break_threshold=100,
-                 test_seeds=None, use_clustering=False, train_clusters=None, kmeans_model=None, test_clusters=None):
+                 test_seeds=None, use_clustering=False, train_clusters=None, kmeans_model=None, test_clusters=None,
+                 batch_size=16):
         self.encoder = encoder.to(device)
         self.decoder = decoder.to(device)
         self.train_dataloader = train_dataloader
@@ -184,6 +185,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
         self.train_on_subset = train_on_subset
         self.train_break_threshold = train_break_threshold
         self.use_clustering = use_clustering
+        self.batch_size = batch_size
         if self.use_clustering:
             self.train_clusters = train_clusters
             self.test_clusters = test_clusters
@@ -409,7 +411,7 @@ class Trainer:  # batch-wise autoregressively input k question and get (k+1)_th 
 
     def train_epoch_clustered(self, cluster):
         for cluster_x, cluster_y in cluster:
-            cluster_dataloader = DataLoader(dataset=CustomDataset(cluster_x, cluster_y), batch_size=BATCH_SIZE, shuffle=True)
+            cluster_dataloader = DataLoader(dataset=CustomDataset(cluster_x, cluster_y), batch_size=self.batch_size, shuffle=True)
             self.train_epoch_autoregressive(cluster_dataloader)
 
     # def train_epoch_max_context(self, train_dataloader):
@@ -837,12 +839,12 @@ if __name__ == "__main__":
         #     print(f"Batch {i}:")
         #     print(f"  x shape: {batch_x.shape}")
         #     print(f"  y shape: {batch_y.shape}") 
-        test_clusters = kmeans_model.predict(val_x[0])
+        test_clusters = kmeans_model.predict(test_x[0])
         test_cluster_to_indices = {i: [] for i in range(NUM_CLUSTERS)}
         for idx, cluster in enumerate(test_clusters):
             test_cluster_to_indices[cluster].append(idx)
         # print(test_clusters)
-        test_cluster_batches = create_cluster_batches(val_x, val_y, test_cluster_to_indices)
+        test_cluster_batches = create_cluster_batches(test_x, test_y, test_cluster_to_indices)
         print("Finish Clustering")
     else:
         train_cluster_batches = None
@@ -863,7 +865,7 @@ if __name__ == "__main__":
     encoder = Encoder(c_dim=EMBEDDING_DIM+1, z_dim=Z_DIM, linear=ENCODER_USE_LINEAR, layernorm=ENCODER_USE_LAYERNORM)
     decoder = Decoder(q_dim=EMBEDDING_DIM, z_dim=Z_DIM, use_concat=USE_CONCAT, linear=DECODER_USE_LINEAR, normalize=DECODER_NORMALIZE)
     trainer = Trainer(encoder, decoder, SAMPLE_LENGTH, 
-                    train_dataloader=train_dataloader, test_dataloader=val_dataloader, ref_dataloader=train_val_dataloader,
+                    train_dataloader=train_dataloader, test_dataloader=test_dataloader, ref_dataloader=train_val_dataloader,
                     lr=LR, use_kl=USE_KL, kl_weight = KL_WEIGHT, device=device, train_on_subset=TRAIN_ON_SUBSET,
                     train_break_threshold=TRAIN_BREAK_THRESHOLD, use_clustering=USE_CLUSTERING,
                     train_clusters=train_cluster_batches, kmeans_model=kmeans_model, test_clusters=test_cluster_batches)

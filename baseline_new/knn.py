@@ -43,10 +43,10 @@ def evaluate(train_x, train_y, test_x, test_y, num_neighbors):
     return {"mean_accuracy": sum(accu) / len(accu)}
 
 if __name__ == "__main__":
-    TRAIN_X_PATH = f'data_new/mf_embedding_test/mf_loo_train_x.pth'
-    TRAIN_Y_PATH = f'data_new/mf_embedding_test/mf_loo_train_y.pth'
-    TEST_X_PATH = f'data_new/mf_embedding_test/mf_loo_test_x.pth'
-    TEST_Y_PATH = f'data_new/mf_embedding_test/mf_loo_test_y.pth'
+    TRAIN_X_PATH = f'data_new/new_train_x.pth'
+    TRAIN_Y_PATH = f'data_new/new_train_y.pth'
+    TEST_X_PATH = f'data_new/new_test_x.pth'
+    TEST_Y_PATH = f'data_new/new_test_y.pth'
     NUM_NEIGHBORS = 132
 
     print(f"Start Initializing Dataset...")

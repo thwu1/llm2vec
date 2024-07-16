@@ -240,40 +240,18 @@ def train_recsys_rating(
     progress_bar.close()
     return max(test_acces)
 
-if __name__ == "__main__":
-    EMBED_DIM = 232
-    ALPHA = 0.001
-    TEST_MODE = True
-    EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings.pth"
-    TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/loo_truthfulqa_mathqa_train.csv"
-    VAL_DATA_PATH = f"{pwd}/data_new/new_val_set.csv"
-    TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/loo_truthfulqa_mathqa_test.csv"
-    SAVE_EMBEDDING = True
-    SAVED_EMBEDDING_PATH = "data_new/mf_embedding_test/loo_truthfulqa_mathqa_embedding.pth"
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--embedding_dim", type=int, default=EMBED_DIM)
-    parser.add_argument("--batch_size", type=int, default=2048)
-    parser.add_argument("--num_epochs", type=int, default=50)
-    parser.add_argument("--subset_size", type=int, default=None)
-    parser.add_argument("--base_model_only", action="store_true", default=True)
-    parser.add_argument("--alpha", type=float, default=ALPHA, help="noise level")
-    args = parser.parse_args()
-
+def run_mf(train_data_path, test_data_path, embedding_dim, alpha, embedding_path, saved_embedding_path):
     print("Start Loading Dataset")
-    global_train_data = pd.read_csv(TRAIN_DATA_PATH)
-    if TEST_MODE:
-        global_test_data = pd.read_csv(TEST_DATA_PATH)
-    else:
-        global_test_data = pd.read_csv(VAL_DATA_PATH)
+    global_train_data = pd.read_csv(train_data_path)
+    global_test_data = pd.read_csv(test_data_path)
     print("Finish Loading Dataset")
 
-    embedding_dim = args.embedding_dim
-    batch_size = args.batch_size
-    num_epochs = args.num_epochs
-    subset_size = args.subset_size
-    base_model_only = args.base_model_only
-    alpha = args.alpha
+    embedding_dim = embedding_dim
+    batch_size = 2048
+    num_epochs = 50
+    subset_size = None
+    base_model_only = True
+    alpha = alpha
     device = torch.device("cuda")
 
     (
@@ -288,7 +266,7 @@ if __name__ == "__main__":
                        batch_size=batch_size, subset_size=subset_size, base_model_only=base_model_only,)
 
     mf = TextMF(
-        embedding_path=EMBEDDING_PATH,
+        embedding_path=embedding_path,
         dim=embedding_dim,
         num_models=num_models,
         num_prompts=35673, # TODO: fix this
@@ -296,6 +274,7 @@ if __name__ == "__main__":
         alpha=alpha,
     ).to(device)
 
+    # num_epochs = 1
     max_test_acc = train_recsys_rating(
         mf,
         train_loader,
@@ -309,6 +288,28 @@ if __name__ == "__main__":
     print(f"Embedding Dim: {embedding_dim}, Alpha: {alpha}")
     print(f"Max Test Accuracy: {max_test_acc}")
 
-    # print(mf.P.weight.shape)
-    if SAVE_EMBEDDING:
-        torch.save(mf.P.weight, SAVED_EMBEDDING_PATH)
+    torch.save(mf.P.weight, saved_embedding_path)
+
+if __name__ == "__main__":
+    pwd = os.getcwd()
+    # TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/loo_truthfulqa_mathqa_train.csv"
+    # TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/loo_truthfulqa_mathqa_test.csv"
+    # SAVED_EMBEDDING_PATH = "data_new/mf_embedding_test/loo_truthfulqa_mathqa_embedding.pth"
+
+    embeddings_folder_path = f"{pwd}/data_new/mf_embedding_test/for_paper/data"
+    all_combo_ls = [item for item in os.listdir(embeddings_folder_path) if "train.csv" in item]
+    # Index from 0 to 55
+    start_index = 42
+    end_index = 56
+
+    embedding_dim = 232
+    alpha = 0.001
+    embedding_path = f"{pwd}/data_new/new_prompt_embeddings.pth"
+    for i in range(start_index, end_index):
+        train_data_path = f"{pwd}/data_new/mf_embedding_test/for_paper/data/{all_combo_ls[i]}"
+        test_data_path = train_data_path.replace("train.csv", "test.csv")
+        saved_embedding_path = f"{pwd}/data_new/mf_embedding_test/for_paper/embeddings/{all_combo_ls[i].replace('train.csv', 'embedding.pth')}"
+        print(train_data_path)
+        print(test_data_path)
+        print(saved_embedding_path)
+        run_mf(train_data_path, test_data_path, embedding_dim, alpha, embedding_path, saved_embedding_path)
