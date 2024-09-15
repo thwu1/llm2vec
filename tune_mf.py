@@ -10,6 +10,7 @@ import os
 pwd = os.getcwd()
 global_train_data = pd.read_csv(f"{pwd}/data_new/new_train_set.csv")
 global_test_data = pd.read_csv(f"{pwd}/data_new/new_val_set.csv")
+EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings.pth"
 
 def tune_mf(config, global_train_data, global_test_data):
     embedding_dim = config["embedding_dim"]
@@ -32,6 +33,7 @@ def tune_mf(config, global_train_data, global_test_data):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     model = TextMF(
+        embedding_path=EMBEDDING_PATH,
         dim=embedding_dim,
         num_models=num_models,
         num_prompts=35673,  # TODO: Fix this
@@ -52,8 +54,8 @@ def tune_mf(config, global_train_data, global_test_data):
 
 
 search_space = {
-    "embedding_dim": tune.choice([8 * k for k in range(32)]),
-    "alpha": tune.choice([1, 0.1, 0.01, 0.005, 0.001, 0.2]),
+    "embedding_dim": tune.grid_search([16 * k for k in range(1,33)]),
+    "alpha": tune.grid_search([1, 0.1, 0.01, 0.001]),
 }
 tune_mf_with_resources = tune.with_resources(tune_mf, {"gpu": 0.1})
 
@@ -61,9 +63,8 @@ tuner = tune.Tuner(
     tune.with_parameters(tune_mf_with_resources, global_train_data=global_train_data, global_test_data=global_test_data),
     param_space=search_space,
     tune_config=tune.TuneConfig(
-        num_samples=300,
-        search_alg=OptunaSearch(metric="test_acc", mode="max"),
-        # scheduler=ASHAScheduler(metric="test_acc", mode="max"),
+        # search_alg=OptunaSearch(metric="test_acc", mode="max"),
+        scheduler=ASHAScheduler(metric="test_acc", mode="max"),
     )
 )
 

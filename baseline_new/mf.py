@@ -241,14 +241,14 @@ def train_recsys_rating(
     return max(test_acces)
 
 if __name__ == "__main__":
-    EMBED_DIM = 232
+    EMBED_DIM = 512
     ALPHA = 0.001
     TEST_MODE = True
     EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings.pth"
-    TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/loo_truthfulqa_mathqa_train.csv"
+    TRAIN_DATA_PATH = f"{pwd}/data_new/new_train_set.csv"
     VAL_DATA_PATH = f"{pwd}/data_new/new_val_set.csv"
-    TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/loo_truthfulqa_mathqa_test.csv"
-    SAVE_EMBEDDING = True
+    TEST_DATA_PATH = f"{pwd}/data_new/new_test_set.csv"
+    SAVE_EMBEDDING = False
     SAVED_EMBEDDING_PATH = "data_new/mf_embedding_test/loo_truthfulqa_mathqa_embedding.pth"
     
     parser = argparse.ArgumentParser()
