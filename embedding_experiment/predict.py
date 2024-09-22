@@ -53,15 +53,15 @@ def correlation_significance(data, test_benchmarks, show_regression=False, test_
         if show_regression:
             # Scatter plot of y_pred vs y_test
             plt.figure(figsize=(8, 6))
-            plt.scatter(y_test, y_pred, color='blue', label='Predictions')
+            plt.scatter(y_test, y_pred, color='blue', label='Predicted Accuracy')
 
             # Plot the y=x line
             plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--', label='y = x')
 
             # Add labels and title
-            plt.xlabel('True Values')
-            plt.ylabel('Predicted Values')
-            plt.title('Scatter Plot of Predictions vs True Values')
+            plt.xlabel('Actual Benchmark Accuracy')
+            plt.ylabel('Predicted Benchmark Accuracy')
+            plt.title(f'Predicted vs. True Benchmark Accuracy on {test_benchmark_name.upper()}')
             plt.legend()
             plt.grid(True)
 
@@ -150,32 +150,33 @@ if __name__ == "__main__":
         # plt.ylabel('Frequency')
         # plt.show()
 
+    kt_test_results = {}
     for test_benchmark in benchmarks:
-        for omitted_benchmark in benchmarks:
-            
-            if test_benchmark == omitted_benchmark:
-                significance[str((test_benchmark, omitted_benchmark))] = 0
-            else:
-                not_removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_embedding.pth"))
-                try:
-                    removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_{omitted_benchmark}_embedding.pth"))
-                except:
-                    removed_data = torch.load(os.path.join('embeddings', f"{omitted_benchmark}_{test_benchmark}_embedding.pth"))
-                significance[
-                    str((test_benchmark, omitted_benchmark))
-                    ] = correlation_significance(
-                        removed_data, [test_benchmark]) - correlation_significance(not_removed_data, [test_benchmark])
-            print(f"MSE Difference of removing {omitted_benchmark} on predicting {test_benchmark}: {significance[str((test_benchmark, omitted_benchmark))]:.6f}")
-            
-    # kt_test_results = {}
+        not_removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_embedding.pth"))
+        correlation_significance(not_removed_data, [test_benchmark], show_regression=True, test_benchmark_name=test_benchmark)
+        kt_test_results[test_benchmark] = correlation_significance(not_removed_data, [test_benchmark], kt_test=True)
+    
     # for test_benchmark in benchmarks:
-    #     not_removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_embedding.pth"))
-    #     correlation_significance(not_removed_data, [test_benchmark], show_regression=True, test_benchmark_name=test_benchmark)
-    #     kt_test_results[test_benchmark] = correlation_significance(not_removed_data, [test_benchmark], kt_test=True)
+    #     for omitted_benchmark in benchmarks:
+            
+    #         if test_benchmark == omitted_benchmark:
+    #             significance[str((test_benchmark, omitted_benchmark))] = 0
+    #         else:
+    #             not_removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_embedding.pth"))
+    #             try:
+    #                 removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_{omitted_benchmark}_embedding.pth"))
+    #             except:
+    #                 removed_data = torch.load(os.path.join('embeddings', f"{omitted_benchmark}_{test_benchmark}_embedding.pth"))
+    #             significance[
+    #                 str((test_benchmark, omitted_benchmark))
+    #                 ] = correlation_significance(
+    #                     removed_data, [test_benchmark]) - correlation_significance(not_removed_data, [test_benchmark])
+    #         print(f"MSE Difference of removing {omitted_benchmark} on predicting {test_benchmark}: {significance[str((test_benchmark, omitted_benchmark))]:.6f}")
+        
 
-    print(significance)
-    with open("mse_differences_result.json", 'w') as json_file:
-        json.dump(significance, json_file, indent=2)
+    # print(significance)
+    # with open("mse_differences_result.json", 'w') as json_file:
+    #     json.dump(significance, json_file, indent=2)
     # print(kt_test_results)
     # with open("kt_test_results.json", 'w') as json_file:
     #     json.dump(kt_test_results, json_file, indent=2)

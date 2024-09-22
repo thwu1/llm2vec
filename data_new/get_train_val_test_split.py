@@ -13,6 +13,9 @@ from sentence_transformers import SentenceTransformer
 # model_name                MBeagleX_7B+Mixtral_11Bx2_MoE_19B_vote
 # category                                         business ethics
 
+# data = pd.read_csv("transformed_responses_mf.csv")
+# print(data.shape)
+# raise Exception
 data = pd.read_csv("all_responses.csv", index_col=0)
 # print(data.head())
 # Set seed for reproducibility
@@ -38,7 +41,10 @@ data.rename(columns={'correctness': 'label', 'question_text': 'prompt'}, inplace
 
 # Step 4: Extract and assign category from question_id
 data['category'] = data['question_id'].apply(lambda x: "_".join(x.split("_")[:-1]))
-
+data['benchmark'] = data['question_id'].apply(lambda x: x.split("_")[0])
+prompt_id_to_benchmark = data[['prompt_id', 'benchmark']].drop_duplicates().set_index('prompt_id')
+prompt_id_to_benchmark.to_csv("prompt_id_to_benchmark.csv")
+raise ValueError("STOP!")
 # Step 5: Assign each category a category_id
 category_id_mapping = {category: idx for idx, category in enumerate(data['category'].unique())}
 data['category_id'] = data['category'].map(category_id_mapping)
@@ -53,7 +59,11 @@ print(transformed_data.head())
 model = SentenceTransformer('all-mpnet-base-v2')
 
 # Get unique prompts and their IDs
-unique_prompts = transformed_data[['prompt_id', 'prompt']].drop_duplicates().set_index('prompt_id')
+# unique_prompts = transformed_data[['prompt_id', 'prompt']].drop_duplicates().set_index('prompt_id')
+unique_prompts = transformed_data[['prompt_id', 'prompt']].set_index('prompt_id')
+# print(unique_prompts.shape)
+# raise Exception
+# unique_prompts.to_csv("prompt_order.csv")
 
 # Compute embeddings for each unique prompt
 embeddings = model.encode(unique_prompts['prompt'].tolist(), convert_to_tensor=True)
@@ -68,7 +78,7 @@ for idx, (prompt_id, _) in enumerate(unique_prompts.iterrows()):
     embedding_tensor[prompt_id] = embeddings[idx]
 
 # Save the embedding tensor to a file
-torch.save(embedding_tensor, 'new_prompt_embeddings.pth')
+torch.save(embedding_tensor, 'new_prompt_embeddings_36054.pth')
 
 # Print the shape of the embedding tensor to verify
 print(f"Embedding tensor shape: {embedding_tensor.shape}")

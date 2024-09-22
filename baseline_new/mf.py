@@ -1,21 +1,14 @@
+import wandb,json,random,argparse,ray,time,torch,os
 import pandas as pd
-import os
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import numpy as np
-import torch
 from torch import nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 from torch.nn import functional as F
-import time
 from torch.optim import Adam, SGD
 from tqdm import tqdm
-import wandb
-import json
-import random
-import argparse
 from ray.train import Checkpoint
-import ray
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -110,6 +103,105 @@ def split_and_load(global_train_data, global_test_data, batch_size=64, subset_si
     )
 
 
+def create_router_dataloader(original_dataloader):
+    # Step 1: Concatenate all batches from original dataloader into single tensors
+    all_models = []
+    all_prompts = []
+    all_labels = []
+    all_categories = []
+
+    for batch in original_dataloader:
+        models, prompts, labels, categories = batch
+        all_models.append(models)
+        all_prompts.append(prompts)
+        all_labels.append(labels)
+        all_categories.append(categories)
+
+    all_models = torch.cat(all_models)
+    all_prompts = torch.cat(all_prompts)
+    all_labels = torch.cat(all_labels)
+    all_categories = torch.cat(all_categories)
+
+    # Step 2: Create dictionaries to store labels and categories
+    label_dict = {}
+    category_dict = {}
+
+    # Step 3: Fill in the dictionaries
+    for i in range(len(all_prompts)):
+        prompt_id = int(all_prompts[i])
+        model_id = int(all_models[i])
+        label = int(all_labels[i])
+        category = int(all_categories[i])
+        
+        if prompt_id not in label_dict:
+            label_dict[prompt_id] = {}
+        label_dict[prompt_id][model_id] = label
+        
+        if prompt_id not in category_dict:
+            category_dict[prompt_id] = category
+
+    # Step 4: Create the unique prompt and model lists
+    unique_prompts = sorted(set(all_prompts.tolist()))
+    unique_models = sorted(set(all_models.tolist()))
+    model_num = len(unique_models)
+    print(f"Model Num: {model_num}")
+
+    # Step 5: Build the new dataloader content
+    new_models = []
+    new_prompts = []
+    new_labels = []
+    new_categories = []
+
+    for prompt_id in unique_prompts:
+        # Repeat the prompt ID for all models
+        prompt_tensor = torch.tensor([prompt_id] * model_num)
+        model_tensor = torch.tensor(unique_models)
+        
+        # Get labels for all models for the current prompt
+        label_tensor = torch.tensor([label_dict[prompt_id][model_id] for model_id in unique_models])
+        
+        # Get the category for the current prompt and repeat it for all models
+        category_tensor = torch.tensor([category_dict[prompt_id]] * model_num)
+        
+        new_prompts.append(prompt_tensor)
+        new_models.append(model_tensor)
+        new_labels.append(label_tensor)
+        new_categories.append(category_tensor)
+
+    # Step 6: Concatenate the new tensors
+    new_prompts = torch.cat(new_prompts)
+    new_models = torch.cat(new_models)
+    new_labels = torch.cat(new_labels)
+    new_categories = torch.cat(new_categories)
+
+    # Step 7: Create the new DataLoader
+    new_dataset = TensorDataset(new_prompts, new_models, new_labels, new_categories)
+    new_dataloader = DataLoader(new_dataset, batch_size=model_num, shuffle=False)
+
+    def compute_model_accuracy(label_dict, model_num=112):
+        accuracy_dict = {}
+
+        for model_id in range(model_num):
+            correct_count = 0
+            total_count = 0
+            
+            for prompt_id in label_dict:
+                if model_id in label_dict[prompt_id]:
+                    correct_count += label_dict[prompt_id][model_id]
+                    total_count += 1
+
+            if total_count > 0:
+                accuracy = correct_count / total_count
+            else:
+                accuracy = 0.0
+
+            accuracy_dict[model_id] = accuracy
+
+        return accuracy_dict
+
+    acc_dict = compute_model_accuracy(label_dict)
+    return new_dataloader, label_dict, acc_dict
+    
 class TextMF(torch.nn.Module):
     def __init__(self, embedding_path, dim, num_models, num_prompts, text_dim=768, num_classes=2, alpha=0.05):
         super().__init__()
@@ -157,11 +249,17 @@ def evaluator(net, test_iter, devices):
         for models, prompts, labels, categories in test_iter:
             # Assuming devices refer to potential GPU usage
             models = models.to(devices[0])  # Move data to the appropriate device
+            # print(models.shape)
+            # print(models)
+
             prompts = prompts.to(devices[0])
             labels = labels.to(devices[0])
             categories = categories.to(devices[0])
 
             logits = net(models, prompts, categories)
+            # print(logits.shape)
+            # print(logits[:50])
+            # raise ValueError("STOP!")
             loss = ls_fn(logits, labels)  # Calculate the loss
             pred_labels = net.predict(models, prompts, categories)
             correct += (pred_labels == labels).sum().item()
@@ -169,6 +267,53 @@ def evaluator(net, test_iter, devices):
             num_samples += labels.shape[0]
     net.train()
     return float(sum(ls_list) / num_samples), correct / num_samples
+
+def evaluator_router(net, test_iter, devices, acc_dict, model_num=112):
+    net.eval()
+    successful_num_routes = 0
+    num_prompts = 0
+    
+    model_counts = [0] * model_num
+    correctness_result = {}
+    with torch.no_grad():
+        for prompts, models, labels, categories in test_iter:
+            prompts = prompts.to(devices[0])
+            models = models.to(devices[0])
+            labels = labels.to(devices[0])
+            categories = categories.to(devices[0])
+
+            logits = net(models, prompts, categories)
+            logit_diff = (logits[:, 1] - logits[:, 0]).unsqueeze(1)
+            max_index = torch.argmax(logit_diff)
+            model_counts[max_index.item()] += 1
+            successful_num_routes += int(labels[max_index] == 1)
+            num_prompts += 1
+            correctness_result[int(prompts[0])] = int(labels[max_index] == 1)
+
+    # Calculate route accuracy
+    route_acc = float(successful_num_routes / num_prompts)
+    print(f"Route Accuracy: {route_acc}")
+
+    # Calculate the highest accuracy baseline
+    highest_accuracy = max(acc_dict.values())
+    print(f"Highest Model Accuracy: {highest_accuracy}")
+
+    # Calculate the weighted accuracy based on route_to
+    weighted_acc_sum = 0
+    for model_id, count in enumerate(model_counts):
+        if count > 0:
+            weighted_acc_sum += acc_dict[model_id] * count
+    
+    if sum(model_counts) > 0:
+        weighted_accuracy = weighted_acc_sum / sum(model_counts)
+    else:
+        weighted_accuracy = 0
+
+    print(f"Weighted Baseline Accuracy: {weighted_accuracy}")
+
+    net.train()
+    
+    return "N/A", route_acc, correctness_result, model_counts
 
 def train_recsys_rating(
     net,
@@ -180,7 +325,7 @@ def train_recsys_rating(
     num_epochs,
     loss=nn.CrossEntropyLoss(reduction="mean"),
     devices=["cuda"],
-    evaluator=evaluator,
+    evaluator=evaluator_router,
     **kwargs,
 ):
     lr = 1e-4
@@ -213,6 +358,8 @@ def train_recsys_rating(
     train_losses = []
     test_losses = []
     test_acces = []
+    correctness_results = []
+    model_counts_ls = []
     embeddings = []
     progress_bar = tqdm(total=num_epochs)
     for epoch in range(num_epochs):
@@ -221,9 +368,14 @@ def train_recsys_rating(
         info = {"train_loss": train_loss, "epoch": epoch}
 
         if evaluator:
-            test_ls, test_acc = evaluator(net, test_iter, devices)
+            if evaluator == evaluator_router:
+                test_ls, test_acc, correctness_result, model_counts = evaluator(net, test_iter, devices, acc_dict)
+            else:
+                test_ls, test_acc = evaluator(net, test_iter, devices)
             test_losses.append(test_ls)
             test_acces.append(test_acc)
+            correctness_results.append(correctness_result)
+            model_counts_ls.append(model_counts)
             info.update({"test_loss": test_ls, "test_acc": test_acc, "epoch": epoch})
         else:
             test_ls = None  # No evaluation
@@ -238,18 +390,26 @@ def train_recsys_rating(
         progress_bar.update(1)
 
     progress_bar.close()
-    return max(test_acces)
+    max_index = test_acces.index(max(test_acces))
+    best_correctness = correctness_results[max_index]
+    best_model_counts = model_counts_ls[max_index]
+    return max(test_acces), best_correctness, best_model_counts
 
 if __name__ == "__main__":
-    EMBED_DIM = 512
+    EMBED_DIM = 232
     ALPHA = 0.001
     TEST_MODE = True
     EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings.pth"
     TRAIN_DATA_PATH = f"{pwd}/data_new/new_train_set.csv"
+    # TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/for_paper/data/loo_gsm8k_train.csv"
     VAL_DATA_PATH = f"{pwd}/data_new/new_val_set.csv"
     TEST_DATA_PATH = f"{pwd}/data_new/new_test_set.csv"
+    # TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/for_paper/data/loo_gsm8k_test.csv"
     SAVE_EMBEDDING = False
     SAVED_EMBEDDING_PATH = "data_new/mf_embedding_test/loo_truthfulqa_mathqa_embedding.pth"
+    SAVE_CORRECTNESS = True
+    SAVED_CORRECTNESS_PATH = "data_new/best_correctness_result.json"
+    SAVED_MODEL_COUNT_PATH = "data_new/best_model_counts.json"
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--embedding_dim", type=int, default=EMBED_DIM)
@@ -287,6 +447,44 @@ if __name__ == "__main__":
     ) = split_and_load(global_train_data=global_train_data, global_test_data=global_test_data,
                        batch_size=batch_size, subset_size=subset_size, base_model_only=base_model_only,)
 
+    # i = 0
+    router_test_loader, label_dict, acc_dict = create_router_dataloader(test_loader)
+    print(label_dict)
+    print(acc_dict)
+    # with open("data_new/label_dict.json", "w") as outfile: 
+    #     json.dump(label_dict, outfile)
+    # with open("data_new/acc_dict.json", "w") as outfile: 
+    #     json.dump(acc_dict, outfile)
+    # raise ValueError("ACC STOP!")
+    # for prompts, models, labels, categories in router_test_loader:
+    #     print(prompts.shape)
+    #     print(prompts)
+    #     print(models.shape)
+    #     print(models)
+    #     print(labels.shape)
+    #     print(labels)
+    #     i += 1
+    #     if i >= 3:
+    #         break
+
+    # i = 0
+    # for models, prompts, labels, categories in test_loader:
+    #     model_num = 112
+    #     all_models = torch.tensor(range(model_num))
+    #     for prompt in list(prompts):
+    #         prompt_tensor = torch.tensor([prompt]*model_num)
+    #     # print(all_models)
+    #     # print(prompt_tensor)
+    #     print(models.shape)
+    #     print(models)
+    #     print(prompts.shape)
+    #     print(prompts)
+    #     print(labels.shape)
+    #     print(labels)
+    #     i += 1
+    #     if i >= 3:
+    #         raise ValueError("STOP!!!")
+
     mf = TextMF(
         embedding_path=EMBEDDING_PATH,
         dim=embedding_dim,
@@ -296,10 +494,10 @@ if __name__ == "__main__":
         alpha=alpha,
     ).to(device)
 
-    max_test_acc = train_recsys_rating(
+    max_test_acc, best_correctness, best_model_counts = train_recsys_rating(
         mf,
         train_loader,
-        test_loader,
+        router_test_loader, # test_loader or router_test_loader
         num_models,
         num_prompts,
         batch_size,
@@ -308,7 +506,11 @@ if __name__ == "__main__":
     )
     print(f"Embedding Dim: {embedding_dim}, Alpha: {alpha}")
     print(f"Max Test Accuracy: {max_test_acc}")
-
+    if SAVE_CORRECTNESS:
+        with open(SAVED_CORRECTNESS_PATH, "w") as outfile: 
+            json.dump(best_correctness, outfile)
+        with open(SAVED_MODEL_COUNT_PATH, "w") as outfile: 
+            json.dump(best_model_counts, outfile)
     # print(mf.P.weight.shape)
     if SAVE_EMBEDDING:
         torch.save(mf.P.weight, SAVED_EMBEDDING_PATH)
