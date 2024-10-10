@@ -269,6 +269,7 @@ def evaluator(net, test_iter, devices):
     return float(sum(ls_list) / num_samples), correct / num_samples
 
 def evaluator_router(net, test_iter, devices, acc_dict, model_num=112):
+    start_time = time.time()
     net.eval()
     successful_num_routes = 0
     num_prompts = 0
@@ -312,7 +313,8 @@ def evaluator_router(net, test_iter, devices, acc_dict, model_num=112):
     print(f"Weighted Baseline Accuracy: {weighted_accuracy}")
 
     net.train()
-    
+    end_time = time.time()
+    print(f"Time used to route {num_prompts} questions: {end_time - start_time}")
     return "N/A", route_acc, correctness_result, model_counts
 
 def train_recsys_rating(
@@ -407,7 +409,7 @@ if __name__ == "__main__":
     # TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/for_paper/data/loo_gsm8k_test.csv"
     SAVE_EMBEDDING = False
     SAVED_EMBEDDING_PATH = "data_new/mf_embedding_test/loo_truthfulqa_mathqa_embedding.pth"
-    SAVE_CORRECTNESS = True
+    SAVE_CORRECTNESS = False
     SAVED_CORRECTNESS_PATH = "data_new/best_correctness_result.json"
     SAVED_MODEL_COUNT_PATH = "data_new/best_model_counts.json"
     

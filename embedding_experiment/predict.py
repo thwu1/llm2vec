@@ -59,10 +59,10 @@ def correlation_significance(data, test_benchmarks, show_regression=False, test_
             plt.plot([min(y_test), max(y_test)], [min(y_test), max(y_test)], color='red', linestyle='--', label='y = x')
 
             # Add labels and title
-            plt.xlabel('Actual Benchmark Accuracy')
-            plt.ylabel('Predicted Benchmark Accuracy')
-            plt.title(f'Predicted vs. True Benchmark Accuracy on {test_benchmark_name.upper()}')
-            plt.legend()
+            plt.xlabel('Actual Accuracy', fontsize=20)
+            plt.ylabel('Predicted Accuracy', fontsize=20)
+            plt.title(f'Predicted vs. True Model Accuracy on {test_benchmark_name.upper()}', fontsize=20)
+            plt.legend(fontsize=16)
             plt.grid(True)
 
             # Show the plot
@@ -152,9 +152,10 @@ if __name__ == "__main__":
 
     kt_test_results = {}
     for test_benchmark in benchmarks:
-        not_removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_embedding.pth"))
-        correlation_significance(not_removed_data, [test_benchmark], show_regression=True, test_benchmark_name=test_benchmark)
-        kt_test_results[test_benchmark] = correlation_significance(not_removed_data, [test_benchmark], kt_test=True)
+        if test_benchmark == "mathqa":
+            not_removed_data = torch.load(os.path.join('embeddings', f"{test_benchmark}_embedding.pth"))
+            correlation_significance(not_removed_data, [test_benchmark], show_regression=True, test_benchmark_name=test_benchmark)
+            kt_test_results[test_benchmark] = correlation_significance(not_removed_data, [test_benchmark], kt_test=True)
     
     # for test_benchmark in benchmarks:
     #     for omitted_benchmark in benchmarks:

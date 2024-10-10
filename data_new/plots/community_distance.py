@@ -16,21 +16,21 @@ width = 0.3
 fig, ax = plt.subplots(figsize=(10, 6))
 
 # Plot the side-by-side bars with more distinct colors
-rects1 = ax.bar(x - width/2, intra_distances, width, label='Intra-Community L2 Distance', color='#1f77b4')  # Blue
-rects2 = ax.bar(x + width/2, inter_distances, width, label='Inter-Community L2 Distance', color='#ff7f0e')  # Orange
+rects1 = ax.bar(x - width/2, intra_distances, width, label='Intra-Community', color='#1f77b4')  # Blue
+rects2 = ax.bar(x + width/2, inter_distances, width, label='Inter-Community', color='#ff7f0e')  # Orange
 
 # Add labels, title, and custom ticks on the x-axis
-ax.set_xlabel('Community')
-ax.set_ylabel('L2 Distance')
-ax.set_title('Averaged Intra-Community vs Inter-Community L2 Distances')
+ax.set_xlabel('Community', fontsize=20)
+ax.set_ylabel('Averaged L2 Distance', fontsize=20)
+ax.set_title('Averaged Intra-Community vs Inter-Community L2 Distances', fontsize=20)
 
 # Increase the y-axis range to emphasize differences
 ax.set_ylim(8, 10)
 
 # Set x-axis ticks and labels
 ax.set_xticks(x)
-ax.set_xticklabels(communities)
-ax.legend()
+ax.set_xticklabels(communities, fontsize=20)
+ax.legend(fontsize=16)
 
 # Add grid for better readability
 ax.grid(True, linestyle='--', alpha=0.6)

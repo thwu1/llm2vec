@@ -22,7 +22,7 @@ x = np.arange(n_benchmarks)
 bar_width = 0.25
 
 # Plot
-fig, ax = plt.subplots(figsize=(12, 6))
+fig, ax = plt.subplots(figsize=(12, 8))
 
 # Bar positions
 bar1 = ax.bar(x - bar_width, matrix_factorization, width=bar_width, label='Matrix Factorization', color='steelblue')
@@ -30,15 +30,15 @@ bar2 = ax.bar(x, single_best, width=bar_width, label='Single-Best', color='light
 bar3 = ax.bar(x + bar_width, weighted, width=bar_width, label='Weighted', color='gold')
 
 # Labels, title, and ticks
-ax.set_xlabel('Benchmark', fontsize=12)
-ax.set_ylabel('Accuracy', fontsize=12)
-ax.set_title('Routing Accuracy Comparison Across Benchmarks', fontsize=14)
+ax.set_xlabel('Benchmark', fontsize=20)
+ax.set_ylabel('Accuracy', fontsize=20)
+ax.set_title('Routing Accuracy Comparison Across Benchmarks', fontsize=20)
 ax.set_xticks(x)
-ax.set_xticklabels(benchmarks, rotation=45, ha='right')
+ax.set_xticklabels(benchmarks, rotation=45, ha='right', fontsize=20)
 
 # Add a grid and a legend
 ax.grid(True, linestyle='--', alpha=0.6)
-ax.legend()
+ax.legend(fontsize=16)
 
 # Display the plot
 plt.tight_layout()
