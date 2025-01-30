@@ -7,8 +7,8 @@ wandb
 *.csv
 *.npy
 *.arrow
-mmlu_response_generation
-data
+mmlu_response_generation/
+data/
 *.ipynb
 *.pth
 *.txt

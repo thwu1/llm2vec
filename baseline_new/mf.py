@@ -9,6 +9,8 @@ from torch.nn import functional as F
 from torch.optim import Adam, SGD
 from tqdm import tqdm
 from ray.train import Checkpoint
+from fvcore.nn import FlopCountAnalysis
+import time
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -327,7 +329,7 @@ def train_recsys_rating(
     num_epochs,
     loss=nn.CrossEntropyLoss(reduction="mean"),
     devices=["cuda"],
-    evaluator=evaluator_router,
+    evaluator=evaluator,
     **kwargs,
 ):
     lr = 1e-4
@@ -372,12 +374,12 @@ def train_recsys_rating(
         if evaluator:
             if evaluator == evaluator_router:
                 test_ls, test_acc, correctness_result, model_counts = evaluator(net, test_iter, devices, acc_dict)
+                correctness_results.append(correctness_result)
+                model_counts_ls.append(model_counts)
             else:
                 test_ls, test_acc = evaluator(net, test_iter, devices)
             test_losses.append(test_ls)
             test_acces.append(test_acc)
-            correctness_results.append(correctness_result)
-            model_counts_ls.append(model_counts)
             info.update({"test_loss": test_ls, "test_acc": test_acc, "epoch": epoch})
         else:
             test_ls = None  # No evaluation
@@ -393,30 +395,48 @@ def train_recsys_rating(
 
     progress_bar.close()
     max_index = test_acces.index(max(test_acces))
-    best_correctness = correctness_results[max_index]
-    best_model_counts = model_counts_ls[max_index]
-    return max(test_acces), best_correctness, best_model_counts
+    if evaluator == evaluator_router:
+        best_correctness = correctness_results[max_index]
+        best_model_counts = model_counts_ls[max_index]
+        return max(test_acces), best_correctness, best_model_counts
+    else:
+        return max(test_acces)
+
+# Measure FLOPs for one forward pass
+def measure_flops(net, train_iter, device):
+    net.eval()  # Set the model to evaluation mode for FLOP counting
+    sample_batch = next(iter(train_iter))  # Get a single batch from the dataloader
+    models, prompts, labels, categories = [x.to(device) for x in sample_batch]
+
+    # Perform FLOP analysis
+    flops = FlopCountAnalysis(net, (models, prompts, categories))
+    total_flops = flops.total()  # Get total FLOPs
+    print(f"FLOPs per forward pass: {total_flops / 1e9:.2f} GFLOPs")
+    return total_flops
 
 if __name__ == "__main__":
-    EMBED_DIM = 232
+    EMBED_DIM = 2
     ALPHA = 0.001
     TEST_MODE = True
     EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings.pth"
+    # EMBEDDING_PATH = f"{pwd}/data_new/new_prompt_embeddings_nomic_embed_text_v1_ablated.pth"
     TRAIN_DATA_PATH = f"{pwd}/data_new/new_train_set.csv"
-    # TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/for_paper/data/loo_gsm8k_train.csv"
+    # TRAIN_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/for_paper/data/loo_mmlu_train.csv"
     VAL_DATA_PATH = f"{pwd}/data_new/new_val_set.csv"
     TEST_DATA_PATH = f"{pwd}/data_new/new_test_set.csv"
-    # TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/for_paper/data/loo_gsm8k_test.csv"
-    SAVE_EMBEDDING = False
-    SAVED_EMBEDDING_PATH = "data_new/mf_embedding_test/loo_truthfulqa_mathqa_embedding.pth"
+    # TEST_DATA_PATH = f"{pwd}/data_new/mf_embedding_test/for_paper/data/loo_mmlu_test.csv"
+    SAVE_EMBEDDING = True
+    SAVED_EMBEDDING_PATH = f"rebuttal/tsne_model_embeddings_dim_{EMBED_DIM}.pth"
     SAVE_CORRECTNESS = False
     SAVED_CORRECTNESS_PATH = "data_new/best_correctness_result.json"
     SAVED_MODEL_COUNT_PATH = "data_new/best_model_counts.json"
-    
+    BATCH_SIZE = 2048
+    NUM_EPOCHS = 50
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--embedding_dim", type=int, default=EMBED_DIM)
-    parser.add_argument("--batch_size", type=int, default=2048)
-    parser.add_argument("--num_epochs", type=int, default=50)
+    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--num_epochs", type=int, default=NUM_EPOCHS)
     parser.add_argument("--subset_size", type=int, default=None)
     parser.add_argument("--base_model_only", action="store_true", default=True)
     parser.add_argument("--alpha", type=float, default=ALPHA, help="noise level")
@@ -436,7 +456,7 @@ if __name__ == "__main__":
     subset_size = args.subset_size
     base_model_only = args.base_model_only
     alpha = args.alpha
-    device = torch.device("cuda")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     (
         num_models,
@@ -450,9 +470,9 @@ if __name__ == "__main__":
                        batch_size=batch_size, subset_size=subset_size, base_model_only=base_model_only,)
 
     # i = 0
-    router_test_loader, label_dict, acc_dict = create_router_dataloader(test_loader)
-    print(label_dict)
-    print(acc_dict)
+    # router_test_loader, label_dict, acc_dict = create_router_dataloader(test_loader)
+    # print(label_dict)
+    # print(acc_dict)
     # with open("data_new/label_dict.json", "w") as outfile: 
     #     json.dump(label_dict, outfile)
     # with open("data_new/acc_dict.json", "w") as outfile: 
@@ -496,16 +516,19 @@ if __name__ == "__main__":
         alpha=alpha,
     ).to(device)
 
-    max_test_acc, best_correctness, best_model_counts = train_recsys_rating(
+    start_time = time.time()
+    # max_test_acc, best_correctness, best_model_counts = train_recsys_rating(
+    max_test_acc = train_recsys_rating(
         mf,
         train_loader,
-        router_test_loader, # test_loader or router_test_loader
+        test_loader, # test_loader or router_test_loader
         num_models,
         num_prompts,
         batch_size,
         num_epochs,
         devices=[device],
     )
+    end_time = time.time()
     print(f"Embedding Dim: {embedding_dim}, Alpha: {alpha}")
     print(f"Max Test Accuracy: {max_test_acc}")
     if SAVE_CORRECTNESS:
@@ -516,3 +539,16 @@ if __name__ == "__main__":
     # print(mf.P.weight.shape)
     if SAVE_EMBEDDING:
         torch.save(mf.P.weight, SAVED_EMBEDDING_PATH)
+
+    # Rebuttal: Retraining Cost
+    # print(f"Total training time: {(end_time - start_time):.2f} seconds")
+    # print(f"Peak GPU memory usage: {torch.cuda.max_memory_allocated() / 1e9:.2f} GB")
+
+    # flops_per_forward = measure_flops(mf, train_loader, device)
+    # steps_per_epoch = len(train_loader)
+    # total_flops_per_epoch = steps_per_epoch * (flops_per_forward + 2 * flops_per_forward + flops_per_forward)
+    # total_flops_training = total_flops_per_epoch * num_epochs
+    # print(f"Total FLOPs for training: {total_flops_training / 1e12:.2f} TFLOPs")
+
+    # Rebuttal: Embedder Effect
+    print(f"Using Embedder: {EMBEDDING_PATH}")

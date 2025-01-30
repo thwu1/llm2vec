@@ -43,8 +43,8 @@ data.rename(columns={'correctness': 'label', 'question_text': 'prompt'}, inplace
 data['category'] = data['question_id'].apply(lambda x: "_".join(x.split("_")[:-1]))
 data['benchmark'] = data['question_id'].apply(lambda x: x.split("_")[0])
 prompt_id_to_benchmark = data[['prompt_id', 'benchmark']].drop_duplicates().set_index('prompt_id')
-prompt_id_to_benchmark.to_csv("prompt_id_to_benchmark.csv")
-raise ValueError("STOP!")
+# prompt_id_to_benchmark.to_csv("prompt_id_to_benchmark.csv")
+# raise ValueError("STOP!")
 # Step 5: Assign each category a category_id
 category_id_mapping = {category: idx for idx, category in enumerate(data['category'].unique())}
 data['category_id'] = data['category'].map(category_id_mapping)
@@ -56,7 +56,8 @@ transformed_data = data[['prompt_id', 'model_id', 'category_id', 'label', 'promp
 print(transformed_data.head())
 
 # Initialize the sentence transformer model
-model = SentenceTransformer('all-mpnet-base-v2')
+embedder_name = 'all-mpnet-base-v2'
+model = SentenceTransformer(embedder_name)
 
 # Get unique prompts and their IDs
 # unique_prompts = transformed_data[['prompt_id', 'prompt']].drop_duplicates().set_index('prompt_id')
@@ -78,10 +79,10 @@ for idx, (prompt_id, _) in enumerate(unique_prompts.iterrows()):
     embedding_tensor[prompt_id] = embeddings[idx]
 
 # Save the embedding tensor to a file
-torch.save(embedding_tensor, 'new_prompt_embeddings_36054.pth')
-
+torch.save(embedding_tensor, f'new_prompt_embeddings_{embedder_name}.pth')
 # Print the shape of the embedding tensor to verify
 print(f"Embedding tensor shape: {embedding_tensor.shape}")
+raise ValueError("Save embedding")
 
 # Save the transformed dataset to a new CSV file
 transformed_data.to_csv("transformed_responses_mf.csv", index=False)

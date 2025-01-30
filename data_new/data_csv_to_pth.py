@@ -10,9 +10,9 @@ def data_csv_to_pth(data_path, output_path_x, output_path_y):
     df = df.groupby(['model_id', 'prompt_id', 'prompt']).agg({'label': 'max'}).reset_index()
 
     print(df.head(5))
-
+    embedder_name = 'all-mpnet-base-v2'
     # Load a sentence transformer model for embeddings
-    model = SentenceTransformer('all-mpnet-base-v2')
+    model = SentenceTransformer(embedder_name)
 
     # Compute the embeddings for each unique question
     unique_questions = df[['prompt_id', 'prompt']].drop_duplicates()
@@ -34,7 +34,9 @@ def data_csv_to_pth(data_path, output_path_x, output_path_y):
     # Stack the embeddings to create the final tensor
     question_embeddings = np.stack(unique_questions.set_index('prompt_id').loc[correctness_matrix.columns]['embedding'].values)
     final_tensor = np.array([question_embeddings] * correctness_array.shape[0])
-
+    print(question_embeddings.shape)
+    # torch.save(question_embeddings, f"new_prompt_embedding_{embedder_name}", pickle_protocol=4)
+    # raise ValueError("Print")
     # # Reshape to the desired format: (num_models, question_embedding_dim, num_questions)
     # final_tensor = np.transpose(final_tensor, (0, 2, 1))
 
@@ -55,15 +57,15 @@ def data_csv_to_pth(data_path, output_path_x, output_path_y):
     print("Tensor saved successfully.")
 
 if __name__ == "__main__":
-    DATA_PATH_LIST = ["interpolation/new_train_subset_10k.csv", "interpolation/new_train_subset_15k.csv",
-                      "interpolation/new_train_subset_20k.csv", "interpolation/new_train_subset_25k.csv"]
-    OUTPUT_PATH_X_LIST = ["interpolation/new_train_subset_10k_x.pth", "interpolation/new_train_subset_15k_x.pth",
-                      "interpolation/new_train_subset_20k_x.pth", "interpolation/new_train_subset_25k_x.pth"]
-    OUTPUT_PATH_Y_LIST = ["interpolation/new_train_subset_10k_y.pth", "interpolation/new_train_subset_15k_y.pth",
-                      "interpolation/new_train_subset_20k_y.pth", "interpolation/new_train_subset_25k_y.pth"]
-    # DATA_PATH = "interpolation/new_train_subset_5k.csv"
-    # OUTPUT_PATH_X = "interpolation/new_train_subset_5k_x.pth"
-    # OUTPUT_PATH_Y = "interpolation/new_train_subset_5k_y.pth"
+    # DATA_PATH_LIST = ["interpolation/new_train_subset_10k.csv", "interpolation/new_train_subset_15k.csv",
+    #                   "interpolation/new_train_subset_20k.csv", "interpolation/new_train_subset_25k.csv"]
+    # OUTPUT_PATH_X_LIST = ["interpolation/new_train_subset_10k_x.pth", "interpolation/new_train_subset_15k_x.pth",
+    #                   "interpolation/new_train_subset_20k_x.pth", "interpolation/new_train_subset_25k_x.pth"]
+    # OUTPUT_PATH_Y_LIST = ["interpolation/new_train_subset_10k_y.pth", "interpolation/new_train_subset_15k_y.pth",
+    #                   "interpolation/new_train_subset_20k_y.pth", "interpolation/new_train_subset_25k_y.pth"]
+    DATA_PATH_LIST = ["interpolation/new_train_set.csv"]
+    OUTPUT_PATH_X_LIST = ["interpolation/new_train_subset_5k_x.pth"]
+    OUTPUT_PATH_Y_LIST = ["interpolation/new_train_subset_5k_y.pth"]
     for data_path, output_path_x, output_path_y in zip(DATA_PATH_LIST, OUTPUT_PATH_X_LIST, OUTPUT_PATH_Y_LIST):
         print(data_path, output_path_x, output_path_y)
         data_csv_to_pth(data_path, output_path_x, output_path_y)
